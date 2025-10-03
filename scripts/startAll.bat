@@ -13,7 +13,7 @@ if errorlevel 1 (
   set "NODE_INSTALLER_URL=https://nodejs.org/dist/v18.19.0/node-v18.19.0-x64.msi"
   set "NODE_INSTALLER=node-v18.19.0-x64.msi"
 
-  powershell -Command "try { Invoke-WebRequest -Uri '%NODE_INSTALLER_URL%' -OutFile '%NODE_INSTALLER%' -UseBasicParsing; exit 0 } catch { Write-Error $_; exit 1 }"
+  powershell -Command "try { Invoke-WebRequest -Uri '!NODE_INSTALLER_URL!' -OutFile '!NODE_INSTALLER!' -UseBasicParsing; exit 0 } catch { Write-Error $_; exit 1 }"
   if errorlevel 1 (
     echo.
     echo Failed to download Node.js installer. Please install Node.js manually and retry.
@@ -21,14 +21,14 @@ if errorlevel 1 (
   )
 
   echo Running Node.js installer silently. This may take a minute...
-  start /wait msiexec /i "%NODE_INSTALLER%" /qn /norestart
-  set "INSTALL_EXIT=%ERRORLEVEL%"
-  del "%NODE_INSTALLER%" >nul 2>&1
+  start /wait msiexec /i "!NODE_INSTALLER!" /qn /norestart
+  set "INSTALL_EXIT=!ERRORLEVEL!"
+  del "!NODE_INSTALLER!" >nul 2>&1
 
-  if not "%INSTALL_EXIT%"=="0" (
+  if not "!INSTALL_EXIT!"=="0" (
     echo.
-    echo Node.js installer exited with code %INSTALL_EXIT%. Please review the installer logs.
-    exit /b %INSTALL_EXIT%
+    echo Node.js installer exited with code !INSTALL_EXIT!. Please review the installer logs.
+    exit /b !INSTALL_EXIT!
   )
 
   REM Try to update PATH for the current session so npm is visible
