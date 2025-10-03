@@ -3,8 +3,33 @@ const usernameElement = document.querySelector('#bot-username');
 const uptimeElement = document.querySelector('#bot-uptime');
 const guildList = document.querySelector('#guild-list');
 const commandsList = document.querySelector('#commands-list');
+const menuToggle = document.querySelector('.menu-toggle');
+const menuPanel = document.querySelector('#main-menu');
 const messageForm = document.querySelector('#message-form');
 const feedback = document.querySelector('#message-feedback');
+
+if (menuToggle && menuPanel) {
+  menuToggle.addEventListener('click', () => {
+    const open = menuToggle.getAttribute('aria-expanded') === 'true';
+    menuToggle.setAttribute('aria-expanded', String(!open));
+    menuPanel.hidden = open;
+  });
+
+  document.addEventListener('click', (event) => {
+    if (
+      menuPanel.hidden ||
+      event.target === menuPanel ||
+      menuPanel.contains(event.target) ||
+      event.target === menuToggle ||
+      menuToggle.contains(event.target)
+    ) {
+      return;
+    }
+
+    menuToggle.setAttribute('aria-expanded', 'false');
+    menuPanel.hidden = true;
+  });
+}
 
 async function fetchStatus() {
   try {

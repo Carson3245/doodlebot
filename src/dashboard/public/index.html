@@ -7,6 +7,19 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <button class="menu-toggle" aria-label="Toggle navigation" aria-controls="main-menu" aria-expanded="false">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+
+    <nav id="main-menu" class="menu-panel" hidden>
+      <p class="menu-title">Navigation</p>
+      <button type="button" class="menu-item">Personality</button>
+      <button type="button" class="menu-item">Commands</button>
+      <button type="button" class="menu-item">Logs</button>
+    </nav>
+
     <header>
       <h1>Control Panel</h1>
       <p>Manage the moderation and conversation bot directly from your browser.</p>
