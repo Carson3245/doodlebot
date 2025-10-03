@@ -54,6 +54,17 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 
    The helper script waits until the dashboard announces its URL and then opens it for you. If automatic launching fails (for example, in headless environments), the URL is still printed so you can open it manually.
 
+### Windows one-click launcher with RAM usage monitor
+
+If you prefer a single command on Windows, double-click `scripts/startAll.bat`. The batch file:
+
+- Installs the project dependencies (if `node_modules` is missing).
+- Opens a PowerShell window that refreshes the current RAM usage every second.
+- Runs `npm run start:all` so the bot and dashboard boot together.
+- Closes the RAM monitor automatically after the services finish.
+
+> **Tip:** Make sure the required environment variables (like `DISCORD_TOKEN`) are configured in your `.env` file before running the launcher.
+
 ## Folder structure
 
 ```
