@@ -9,6 +9,9 @@ const messageForm = document.querySelector('#message-form');
 const feedback = document.querySelector('#message-feedback');
 
 if (menuToggle && menuPanel) {
+  menuPanel.hidden = true;
+  menuToggle.setAttribute('aria-expanded', 'false');
+
   menuToggle.addEventListener('click', () => {
     const open = menuToggle.getAttribute('aria-expanded') === 'true';
     menuToggle.setAttribute('aria-expanded', String(!open));
@@ -29,9 +32,18 @@ if (menuToggle && menuPanel) {
     menuToggle.setAttribute('aria-expanded', 'false');
     menuPanel.hidden = true;
   });
+
+  menuPanel.querySelectorAll('.menu-item').forEach((link) => {
+    link.addEventListener('click', () => {
+      menuToggle.setAttribute('aria-expanded', 'false');
+      menuPanel.hidden = true;
+    });
+  });
 }
 
 async function fetchStatus() {
+  if (!statusElement || !usernameElement || !uptimeElement || !guildList) return;
+
   try {
     const response = await fetch('/api/status');
     const data = await response.json();
@@ -53,6 +65,8 @@ async function fetchStatus() {
 }
 
 async function fetchCommands() {
+  if (!commandsList) return;
+
   try {
     const response = await fetch('/api/commands');
     const data = await response.json();
@@ -63,9 +77,16 @@ async function fetchCommands() {
       item.innerHTML = `<strong>/${command.name}</strong><br /><small>${command.description}</small><br /><small>Default cooldown: ${command.cooldown}s</small>`;
       commandsList.appendChild(item);
     });
+
+    if (commandsList.children.length === 0) {
+      const empty = document.createElement('li');
+      empty.textContent = 'No commands registered yet.';
+      empty.className = 'placeholder';
+      commandsList.appendChild(empty);
+    }
   } catch (error) {
     console.error(error);
-    commandsList.innerHTML = '<li>Could not load commands.</li>';
+    commandsList.innerHTML = '<li class="placeholder">Could not load commands.</li>';
   }
 }
 
@@ -74,7 +95,10 @@ messageForm?.addEventListener('submit', async (event) => {
   const formData = new FormData(messageForm);
   const payload = Object.fromEntries(formData.entries());
 
-  feedback.textContent = 'Sending message...';
+  if (feedback) {
+    feedback.textContent = 'Sending message...';
+    feedback.style.color = '';
+  }
 
   try {
     const response = await fetch('/api/send-message', {
@@ -85,18 +109,24 @@ messageForm?.addEventListener('submit', async (event) => {
 
     if (!response.ok) {
       const error = await response.json();
-      feedback.textContent = `Error: ${error.error ?? 'unable to send.'}`;
-      feedback.style.color = '#ff6b6b';
+      if (feedback) {
+        feedback.textContent = `Error: ${error.error ?? 'unable to send.'}`;
+        feedback.style.color = '#ff6b6b';
+      }
       return;
     }
 
-    feedback.textContent = 'Message sent successfully!';
-    feedback.style.color = '#63e6be';
+    if (feedback) {
+      feedback.textContent = 'Message sent successfully!';
+      feedback.style.color = '#63e6be';
+    }
     messageForm.reset();
   } catch (error) {
     console.error(error);
-    feedback.textContent = 'Could not reach the server.';
-    feedback.style.color = '#ff6b6b';
+    if (feedback) {
+      feedback.textContent = 'Could not reach the server.';
+      feedback.style.color = '#ff6b6b';
+    }
   }
 });
 
@@ -113,6 +143,11 @@ function formatDuration(ms) {
     .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
 }
 
-fetchStatus();
-fetchCommands();
-setInterval(fetchStatus, 15000);
+if (statusElement && usernameElement && uptimeElement && guildList) {
+  fetchStatus();
+  setInterval(fetchStatus, 15000);
+}
+
+if (commandsList) {
+  fetchCommands();
+}

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DoodleBot Commands</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <button class="menu-toggle" aria-label="Toggle navigation" aria-controls="main-menu" aria-expanded="false">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+
+    <nav id="main-menu" class="menu-panel" hidden>
+      <p class="menu-title">Navigation</p>
+      <a class="menu-item" href="/personality.html">Personality</a>
+      <a class="menu-item" href="/commands.html" aria-current="page">Commands</a>
+      <a class="menu-item" href="/logs.html">Logs</a>
+    </nav>
+
+    <header>
+      <h1>Commands</h1>
+      <p>Inspect the commands registered with your Discord bot along with their default cooldowns.</p>
+      <a class="subtle-link" href="/">← Back to overview</a>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Slash commands</h2>
+        <ul id="commands-list" class="stacked"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Notes</h2>
+        <p class="helper">Extend this page to add enable/disable switches or to push updates to the bot in production.</p>
+      </section>
+    </main>
+
+    <footer>
+      <small>Commands are fetched live from the running bot instance via the REST API.</small>
+    </footer>
+
+    <script src="main.js" type="module"></script>
+  </body>
+</html>

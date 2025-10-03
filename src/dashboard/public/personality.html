@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DoodleBot Personality</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <button class="menu-toggle" aria-label="Toggle navigation" aria-controls="main-menu" aria-expanded="false">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+
+    <nav id="main-menu" class="menu-panel" hidden>
+      <p class="menu-title">Navigation</p>
+      <a class="menu-item" href="/personality.html" aria-current="page">Personality</a>
+      <a class="menu-item" href="/commands.html">Commands</a>
+      <a class="menu-item" href="/logs.html">Logs</a>
+    </nav>
+
+    <header>
+      <h1>Personality</h1>
+      <p>Define how your bot should talk, react, and guide members in your community.</p>
+      <a class="subtle-link" href="/">← Back to overview</a>
+    </header>
+
+    <main>
+      <section class="card">
+        <h2>Greeting message</h2>
+        <form id="greeting-form">
+          <label for="welcome-message">Message template</label>
+          <textarea id="welcome-message" rows="4" placeholder="Welcome to the server, {user}!" required></textarea>
+          <button type="submit" class="primary-action">Save greeting</button>
+        </form>
+        <p class="helper">Use placeholders like <code>{user}</code>, <code>{server}</code>, or <code>{channel}</code>.</p>
+      </section>
+
+      <section class="card">
+        <h2>Tone and behaviour</h2>
+        <form id="tone-form">
+          <label for="tone-select">Preferred tone</label>
+          <select id="tone-select">
+            <option value="friendly">Friendly</option>
+            <option value="professional">Professional</option>
+            <option value="playful">Playful</option>
+            <option value="serious">Serious</option>
+          </select>
+
+          <label for="keywords">Keywords to emphasize</label>
+          <input id="keywords" placeholder="safety, community, fun" />
+
+          <button type="submit" class="primary-action">Save preferences</button>
+        </form>
+      </section>
+    </main>
+
+    <footer>
+      <small>Store these values in your database and sync them with the bot configuration.</small>
+    </footer>
+
+    <script src="main.js" type="module"></script>
+  </body>
+</html>
