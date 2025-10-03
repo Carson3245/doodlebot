@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Painel do DoodleBot</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Painel de Controle</h1>
+      <p>Gerencie o bot de moderação e conversa diretamente do navegador.</p>
+    </header>
+
+    <main>
+      <section class="card" id="status-card">
+        <h2>Status do bot</h2>
+        <p><strong>Situação:</strong> <span id="bot-status">Desconhecido</span></p>
+        <p><strong>Usuário:</strong> <span id="bot-username">—</span></p>
+        <p><strong>Uptime:</strong> <span id="bot-uptime">—</span></p>
+        <h3>Servidores conectados</h3>
+        <ul id="guild-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Comandos disponíveis</h2>
+        <ul id="commands-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Enviar mensagem rápida</h2>
+        <form id="message-form">
+          <label for="channel-id">ID do canal</label>
+          <input id="channel-id" name="channelId" placeholder="1234567890" required />
+
+          <label for="message-content">Mensagem</label>
+          <textarea id="message-content" name="message" rows="3" placeholder="Olá, mundo!" required></textarea>
+
+          <button type="submit">Enviar</button>
+          <p class="helper">⚠️ Proteja esta rota com autenticação antes de usar em produção.</p>
+        </form>
+        <p id="message-feedback" role="status"></p>
+      </section>
+    </main>
+
+    <footer>
+      <small>
+        Template criado para acelerar o desenvolvimento de bots com painel. Personalize estilos, rotas e autenticação de acordo com seu projeto.
+      </small>
+    </footer>
+
+    <script src="main.js" type="module"></script>
+  </body>
+</html>
