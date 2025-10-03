@@ -3,6 +3,7 @@ import url from 'node:url';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
+import { personalityStore } from '../config/personalityStore.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
@@ -21,6 +22,21 @@ export function createDashboard(client) {
       uptime: isReady ? client.uptime : 0,
       guilds: isReady ? client.guilds.cache.map((guild) => ({ id: guild.id, name: guild.name })) : []
     });
+  });
+
+  app.get('/api/personality', async (_req, res) => {
+    const personality = await personalityStore.load();
+    res.json(personality);
+  });
+
+  app.put('/api/personality', async (req, res) => {
+    try {
+      const updated = await personalityStore.save(req.body ?? {});
+      res.json(updated);
+    } catch (error) {
+      console.error('Failed to update personality configuration:', error);
+      res.status(500).json({ error: 'Could not save the personality configuration.' });
+    }
   });
 
   app.get('/api/commands', (_req, res) => {

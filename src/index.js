@@ -4,6 +4,7 @@ import { createClient } from './bot/client.js';
 import { loadCommands } from './bot/loadCommands.js';
 import { registerCommands } from './bot/registerCommands.js';
 import { createDashboard } from './dashboard/server.js';
+import { personalityStore } from './config/personalityStore.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -22,6 +23,8 @@ if (!token) {
 const client = createClient();
 
 async function bootstrap() {
+  await personalityStore.load();
+
   const commands = await loadCommands();
 
   commands.forEach((command) => {
@@ -120,7 +123,8 @@ async function bootstrap() {
     }
 
     const textForResponse = sanitizeMessage(content, botUser.id);
-    const replyText = generateChatResponse(textForResponse);
+    const personality = personalityStore.get();
+    const replyText = generateChatResponse(textForResponse, personality);
 
     if (!replyText) {
       return;
@@ -193,34 +197,80 @@ function sanitizeMessage(content, botId) {
   return content.replace(mentionPattern, '').trim();
 }
 
-function generateChatResponse(message) {
+function generateChatResponse(message, personality) {
   const normalized = message.toLowerCase();
 
   if (!normalized.length) {
-    return 'How can I help?';
+    return buildResponse('How can I help?', personality);
   }
 
-  if (normalized.includes('hello') || normalized.includes('hi')) {
-    return 'Hello! What would you like to talk about?';
+  const keywordEntries = Object.entries(personality.conversation.keywordResponses ?? {});
+  for (const [keyword, response] of keywordEntries) {
+    if (normalized.includes(keyword)) {
+      return buildResponse(response, personality);
+    }
   }
 
-  if (normalized.includes('thank')) {
-    return 'You are welcome! Let me know if you need anything else.';
+  for (const keyword of personality.keywords ?? []) {
+    if (normalized.includes(keyword.toLowerCase())) {
+      return buildResponse(`I can share more about ${keyword}. What would you like to know?`, personality);
+    }
   }
 
-  if (normalized.includes('sad') || normalized.includes('upset')) {
-    return 'I am sorry you are going through that. Maybe talking to someone you trust could help.';
+  const acknowledgements = personality.conversation.acknowledgementPhrases ?? [];
+  if (acknowledgements.length) {
+    const index = Math.floor(Math.random() * acknowledgements.length);
+    const acknowledgement = acknowledgements[index];
+
+    const shouldKeepShort = Math.random() < personality.conversation.shortReplyChance;
+    if (shouldKeepShort) {
+      return applyTone(acknowledgement, personality);
+    }
+
+    return applyTone(`${acknowledgement} Tell me more so I can assist you better.`, personality);
   }
 
-  const fallbackResponses = [
-    'Interesting. Tell me more about that.',
-    'That sounds like something worth exploring.',
-    'I am here to chat whenever you need me.',
-    'Let us think about it together.'
-  ];
+  return applyTone('I am here to chat whenever you need me.', personality);
+}
 
-  const randomIndex = Math.floor(Math.random() * fallbackResponses.length);
-  return fallbackResponses[randomIndex];
+function buildResponse(base, personality) {
+  const shouldKeepShort = Math.random() < personality.conversation.shortReplyChance;
+  if (shouldKeepShort) {
+    return applyTone(base, personality);
+  }
+
+  return applyTone(`${base} I am listening.`, personality);
+}
+
+function applyTone(message, personality) {
+  const style = personality.conversation.style;
+  const tone = personality.tone;
+
+  if (style === 'informative') {
+    return `${message} Here is what I understand so far: you are looking for details or guidance.`;
+  }
+
+  if (style === 'playful') {
+    return `${message} Let us turn this into something fun to solve together.`;
+  }
+
+  if (style === 'concise') {
+    return `${message}`;
+  }
+
+  if (tone === 'professional') {
+    return `${message} Please provide any additional information you consider relevant.`;
+  }
+
+  if (tone === 'serious') {
+    return `${message} I am focused on helping you resolve this.`;
+  }
+
+  if (tone === 'playful') {
+    return `${message} Let us keep this lively.`;
+  }
+
+  return `${message} I am here for you.`;
 }
 
 bootstrap().catch((error) => {

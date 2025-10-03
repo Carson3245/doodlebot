@@ -7,6 +7,8 @@ const menuToggle = document.querySelector('.menu-toggle');
 const menuPanel = document.querySelector('#main-menu');
 const messageForm = document.querySelector('#message-form');
 const feedback = document.querySelector('#message-feedback');
+const personalityForm = document.querySelector('#personality-form');
+const personalityFeedback = document.querySelector('#personality-feedback');
 
 if (menuToggle && menuPanel) {
   menuPanel.hidden = true;
@@ -130,6 +132,109 @@ messageForm?.addEventListener('submit', async (event) => {
   }
 });
 
+async function populatePersonalityForm() {
+  if (!personalityForm) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/personality');
+    const data = await response.json();
+
+    const welcomeInput = personalityForm.querySelector('#welcome-message');
+    const toneSelect = personalityForm.querySelector('#tone-select');
+    const keywordsInput = personalityForm.querySelector('#keywords');
+    const styleSelect = personalityForm.querySelector('#conversation-style');
+    const shortReplyInput = personalityForm.querySelector('#short-reply');
+    const acknowledgementsInput = personalityForm.querySelector('#acknowledgements');
+    const keywordResponsesInput = personalityForm.querySelector('#keyword-responses');
+
+    if (welcomeInput) {
+      welcomeInput.value = data.welcomeMessage ?? '';
+    }
+    if (toneSelect) {
+      toneSelect.value = data.tone ?? 'friendly';
+    }
+    if (keywordsInput) {
+      keywordsInput.value = Array.isArray(data.keywords) ? data.keywords.join(', ') : data.keywords ?? '';
+    }
+    if (styleSelect) {
+      styleSelect.value = data.conversation?.style ?? 'supportive';
+    }
+    if (shortReplyInput) {
+      shortReplyInput.value = data.conversation?.shortReplyChance ?? 0.2;
+    }
+    if (acknowledgementsInput) {
+      const phrases = data.conversation?.acknowledgementPhrases ?? [];
+      acknowledgementsInput.value = phrases.join('\n');
+    }
+    if (keywordResponsesInput) {
+      const keywordMap = data.conversation?.keywordResponses ?? {};
+      const lines = Object.entries(keywordMap).map(([key, value]) => `${key}: ${value}`);
+      keywordResponsesInput.value = lines.join('\n');
+    }
+  } catch (error) {
+    console.error('Failed to load personality configuration', error);
+    if (personalityFeedback) {
+      personalityFeedback.textContent = 'Failed to load the personality configuration.';
+      personalityFeedback.style.color = '#ff6b6b';
+    }
+  }
+}
+
+personalityForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+
+  const welcomeInput = personalityForm.querySelector('#welcome-message');
+  const toneSelect = personalityForm.querySelector('#tone-select');
+  const keywordsInput = personalityForm.querySelector('#keywords');
+  const styleSelect = personalityForm.querySelector('#conversation-style');
+  const shortReplyInput = personalityForm.querySelector('#short-reply');
+  const acknowledgementsInput = personalityForm.querySelector('#acknowledgements');
+  const keywordResponsesInput = personalityForm.querySelector('#keyword-responses');
+
+  const payload = {
+    welcomeMessage: welcomeInput?.value ?? '',
+    tone: toneSelect?.value ?? 'friendly',
+    keywords: keywordsInput?.value ?? '',
+    conversation: {
+      style: styleSelect?.value ?? 'supportive',
+      shortReplyChance: Number(shortReplyInput?.value ?? 0.2),
+      acknowledgementPhrases: acknowledgementsInput?.value ?? '',
+      keywordResponses: keywordResponsesInput?.value ?? ''
+    }
+  };
+
+  if (personalityFeedback) {
+    personalityFeedback.textContent = 'Saving personality...';
+    personalityFeedback.style.color = '';
+  }
+
+  try {
+    const response = await fetch('/api/personality', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+      throw new Error('Request failed');
+    }
+
+    if (personalityFeedback) {
+      personalityFeedback.textContent = 'Personality saved successfully.';
+      personalityFeedback.style.color = '#63e6be';
+    }
+    await populatePersonalityForm();
+  } catch (error) {
+    console.error('Failed to save personality configuration', error);
+    if (personalityFeedback) {
+      personalityFeedback.textContent = 'Could not save the personality configuration.';
+      personalityFeedback.style.color = '#ff6b6b';
+    }
+  }
+});
+
 function formatDuration(ms) {
   if (!ms) return 'N/A';
 
@@ -150,4 +255,8 @@ if (statusElement && usernameElement && uptimeElement && guildList) {
 
 if (commandsList) {
   fetchCommands();
+}
+
+if (personalityForm) {
+  populatePersonalityForm();
 }

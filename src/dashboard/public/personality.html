@@ -28,30 +28,69 @@
 
     <main>
       <section class="card">
-        <h2>Greeting message</h2>
-        <form id="greeting-form">
-          <label for="welcome-message">Message template</label>
-          <textarea id="welcome-message" rows="4" placeholder="Welcome to the server, {user}!" required></textarea>
-          <button type="submit" class="primary-action">Save greeting</button>
-        </form>
-        <p class="helper">Use placeholders like <code>{user}</code>, <code>{server}</code>, or <code>{channel}</code>.</p>
-      </section>
+        <h2>Conversation personality</h2>
+        <form id="personality-form">
+          <label for="welcome-message">Greeting template</label>
+          <textarea
+            id="welcome-message"
+            name="welcomeMessage"
+            rows="3"
+            placeholder="Welcome to the server, {user}!"
+            required
+          ></textarea>
+          <p class="helper">You can use placeholders such as <code>{user}</code>, <code>{server}</code>, and <code>{channel}</code>.</p>
 
-      <section class="card">
-        <h2>Tone and behaviour</h2>
-        <form id="tone-form">
-          <label for="tone-select">Preferred tone</label>
-          <select id="tone-select">
+          <label for="tone-select">Tone</label>
+          <select id="tone-select" name="tone">
             <option value="friendly">Friendly</option>
             <option value="professional">Professional</option>
             <option value="playful">Playful</option>
             <option value="serious">Serious</option>
           </select>
 
-          <label for="keywords">Keywords to emphasize</label>
-          <input id="keywords" placeholder="safety, community, fun" />
+          <label for="keywords">Important keywords</label>
+          <input id="keywords" name="keywords" placeholder="safety, community, fun" />
 
-          <button type="submit" class="primary-action">Save preferences</button>
+          <label for="conversation-style">Conversation style</label>
+          <select id="conversation-style" name="conversationStyle">
+            <option value="supportive">Supportive</option>
+            <option value="informative">Informative</option>
+            <option value="playful">Playful</option>
+            <option value="concise">Concise</option>
+          </select>
+
+          <label for="short-reply">Short reply probability</label>
+          <input
+            id="short-reply"
+            name="shortReplyChance"
+            type="number"
+            min="0"
+            max="1"
+            step="0.05"
+            value="0.2"
+          />
+          <p class="helper">Use a value between 0 and 1 to control how often the bot keeps answers brief.</p>
+
+          <label for="acknowledgements">Acknowledgement phrases</label>
+          <textarea
+            id="acknowledgements"
+            name="acknowledgements"
+            rows="4"
+            placeholder="I hear you.&#10;That makes sense."
+          ></textarea>
+          <p class="helper">Provide one phrase per line. The bot uses these when it needs to acknowledge a message.</p>
+
+          <label for="keyword-responses">Keyword responses</label>
+          <textarea
+            id="keyword-responses"
+            name="keywordResponses"
+            rows="4"
+            placeholder="help: I can offer suggestions or point you toward helpful resources.&#10;issue: Let us break the issue down together."
+          ></textarea>
+          <p class="helper">Use the format <code>keyword: response</code> per line to define lightweight local rules.</p>
+
+          <button type="submit" class="primary-action">Save personality</button>
+          <p id="personality-feedback" role="status"></p>
         </form>
       </section>
     </main>

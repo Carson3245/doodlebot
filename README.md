@@ -5,7 +5,7 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 ## Features
 
 - Moderation slash commands (`/ban`, `/kick`) with basic validation.
-- Mention-driven conversation flow that keeps responding after the initial ping.
+- Mention-driven conversation flow powered by a lightweight local model that keeps responding after the initial ping.
 - Simple cooldown system to avoid command spam.
 - Express dashboard with a REST API and static interface ready to open in Chrome.
 - Modular structure to add new commands and routes with ease.
@@ -55,6 +55,12 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 
    The helper script waits until the dashboard announces its URL and then opens it for you. If automatic launching fails (for example, in headless environments), the URL is still printed so you can open it manually.
 
+5. Configure the bot personality from the dashboard:
+
+   - Open the **Personality** tab.
+   - Adjust the greeting, tone, keywords, conversation style, short reply probability, acknowledgement phrases, and keyword specific responses.
+   - Submit the form to persist the configuration in `data/personality.json`. The bot picks up the new settings immediately.
+
 ### Windows one-click launcher with RAM usage monitor
 
 If you prefer a single command on Windows, double-click `scripts/startAll.bat`. The batch file:
@@ -73,6 +79,7 @@ If you prefer a single command on Windows, double-click `scripts/startAll.bat`. 
 src/
 |- bot/                # Discord client helpers
 |- commands/           # Slash commands grouped by category
+|- config/             # Lightweight configuration stores (personality, etc.)
 |- dashboard/          # Express server + dashboard assets
 |- index.js            # Entry point
 ```
@@ -81,7 +88,7 @@ src/
 
 - Add authentication to the dashboard (OAuth2, JWT, or another solution).
 - Store moderation logs in a database.
-- Expand the conversation module by integrating an AI API if you want richer responses.
+- Extend the conversation module with additional rules or plug it into an external AI API if you need richer responses.
 - Automate deployment to a service such as Railway, Render, or Fly.io.
 
 ## License
