@@ -44,7 +44,15 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
    npm run dev
    ```
 
-   The dashboard is available at `http://localhost:3000` by default. Open it in Chrome to view the status, list commands, and send test messages.
+   The dashboard is available at `http://localhost:3000` by default.
+
+4. Launch every service and automatically open the dashboard in your default browser:
+
+   ```bash
+   npm run start:all
+   ```
+
+   The helper script waits until the dashboard announces its URL and then opens it for you. If automatic launching fails (for example, in headless environments), the URL is still printed so you can open it manually.
 
 ## Folder structure
 
