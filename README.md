@@ -58,6 +58,7 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 
 If you prefer a single command on Windows, double-click `scripts/startAll.bat`. The batch file:
 
+- Installs Node.js LTS automatically if `npm` is not available yet.
 - Installs the project dependencies (if `node_modules` is missing).
 - Opens a PowerShell window that refreshes the current RAM usage every second.
 - Runs `npm run start:all` so the bot and dashboard boot together.
