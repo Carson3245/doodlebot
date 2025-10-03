@@ -30,5 +30,16 @@ echo.
 echo Shutting down RAM monitor window...
 taskkill /fi "WINDOWTITLE eq RAM Monitor" >nul 2>&1
 
-echo Done.
+echo.
+if "%EXIT_CODE%"=="0" (
+  echo Services finished successfully.
+) else (
+  echo The launcher exited with code %EXIT_CODE%.
+  echo Review the logs above for details.
+)
+
+echo.
+echo Press any key to close this window...
+pause >nul
+
 exit /b %EXIT_CODE%
