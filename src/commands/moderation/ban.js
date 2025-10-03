@@ -39,5 +39,5 @@ export async function execute(interaction) {
   }
 
   await member.ban({ reason });
-  await interaction.reply(`🔨 **${target.tag}** was banned. Reason: ${reason}`);
+  await interaction.reply(`**${target.tag}** was banned. Reason: ${reason}`);
 }

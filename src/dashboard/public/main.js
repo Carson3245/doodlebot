@@ -48,8 +48,8 @@ async function fetchStatus() {
     const response = await fetch('/api/status');
     const data = await response.json();
 
-    statusElement.textContent = data.status === 'online' ? 'Online ✅' : 'Offline ❌';
-    usernameElement.textContent = data.username ?? '—';
+    statusElement.textContent = data.status === 'online' ? 'Online' : 'Offline';
+    usernameElement.textContent = data.username ?? 'N/A';
     uptimeElement.textContent = formatDuration(data.uptime ?? 0);
 
     guildList.innerHTML = '';
@@ -131,7 +131,7 @@ messageForm?.addEventListener('submit', async (event) => {
 });
 
 function formatDuration(ms) {
-  if (!ms) return '—';
+  if (!ms) return 'N/A';
 
   const totalSeconds = Math.floor(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);

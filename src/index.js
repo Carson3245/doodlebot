@@ -10,6 +10,9 @@ const clientId = process.env.CLIENT_ID;
 const guildId = process.env.GUILD_ID;
 const dashboardPort = process.env.DASHBOARD_PORT ?? 3000;
 const prefix = process.env.BOT_PREFIX ?? '!';
+const conversationTimeoutMs = Number(process.env.CONVERSATION_TIMEOUT_MS ?? 2 * 60 * 1000);
+
+const activeConversations = new Map();
 
 if (!token) {
   console.error('Set DISCORD_TOKEN in the .env file before starting the bot.');
@@ -28,7 +31,7 @@ async function bootstrap() {
   await registerCommands({ commands, clientId, guildId, token });
 
   client.once(Events.ClientReady, (readyClient) => {
-    console.log(`🤖 Bot connected as ${readyClient.user.tag}`);
+    console.log(`Bot connected as ${readyClient.user.tag}`);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -61,34 +64,75 @@ async function bootstrap() {
   });
 
   client.on(Events.MessageCreate, async (message) => {
-    if (message.author.bot || !message.content.startsWith(prefix)) {
+    if (message.author.bot) {
       return;
     }
 
-    const content = message.content.slice(prefix.length).trim().toLowerCase();
+    const content = message.content ?? '';
 
-    if (!content.length) {
+    if (content.startsWith(prefix)) {
+      const trimmed = content.slice(prefix.length).trim().toLowerCase();
+
+      if (!trimmed.length) {
+        return;
+      }
+
+      if (trimmed.startsWith('help')) {
+        await message.reply('Use the `/ban` and `/kick` commands or open the web dashboard for more actions.');
+        return;
+      }
+
+      if (trimmed.startsWith('hi') || trimmed.startsWith('hello')) {
+        await message.reply('Hello! Mention me in a channel to start a conversation.');
+        return;
+      }
+
+      await message.reply('I do not recognize that command. Use `!help` to see the options.');
       return;
     }
 
-    if (content.startsWith('help')) {
-      await message.reply(
-        'Use the `/ban`, `/kick`, and `/chat` commands or open the web dashboard for more actions.'
-      );
+    const botUser = client.user;
+    if (!botUser) {
       return;
     }
 
-    if (content.startsWith('hi') || content.startsWith('hello')) {
-      await message.reply('Hello! Use `/chat` to talk with me.');
+    const session = activeConversations.get(message.author.id);
+    const sameChannel = session?.channelId === message.channelId;
+    const mentionedBot = message.mentions.has(botUser);
+
+    if (!mentionedBot && !sameChannel) {
       return;
     }
 
-    await message.reply('I do not recognize that command. Use `!help` to see the options.');
+    const mentionsOtherUsers = message.mentions.users.some((user) => user.id !== botUser.id);
+    const repliedUser = message.mentions.repliedUser;
+    const replyingToOtherUser = Boolean(repliedUser && repliedUser.id !== botUser.id);
+
+    if (!mentionedBot) {
+      if (!session || !sameChannel) {
+        return;
+      }
+
+      if (mentionsOtherUsers || replyingToOtherUser) {
+        endConversation(message.author.id);
+        return;
+      }
+    }
+
+    const textForResponse = sanitizeMessage(content, botUser.id);
+    const replyText = generateChatResponse(textForResponse);
+
+    if (!replyText) {
+      return;
+    }
+
+    await message.reply(replyText);
+    startConversation(message.author.id, message.channelId);
   });
 
   const app = createDashboard(client);
   app.listen(dashboardPort, () => {
-    console.log(`🌐 Dashboard available at http://localhost:${dashboardPort}`);
+    console.log(`Dashboard available at http://localhost:${dashboardPort}`);
   });
 
   await client.login(token);
@@ -117,6 +161,66 @@ function applyCooldown(interaction, command) {
   setTimeout(() => timestamps.delete(interaction.user.id), cooldownAmount);
 
   return { allowed: true };
+}
+
+function startConversation(userId, channelId) {
+  const existing = activeConversations.get(userId);
+  if (existing?.timeout) {
+    clearTimeout(existing.timeout);
+  }
+
+  const timeout = setTimeout(() => {
+    activeConversations.delete(userId);
+  }, conversationTimeoutMs);
+
+  activeConversations.set(userId, { channelId, timeout });
+}
+
+function endConversation(userId) {
+  const existing = activeConversations.get(userId);
+  if (existing?.timeout) {
+    clearTimeout(existing.timeout);
+  }
+  activeConversations.delete(userId);
+}
+
+function sanitizeMessage(content, botId) {
+  if (!content) {
+    return '';
+  }
+
+  const mentionPattern = new RegExp(`<@!?${botId}>`, 'g');
+  return content.replace(mentionPattern, '').trim();
+}
+
+function generateChatResponse(message) {
+  const normalized = message.toLowerCase();
+
+  if (!normalized.length) {
+    return 'How can I help?';
+  }
+
+  if (normalized.includes('hello') || normalized.includes('hi')) {
+    return 'Hello! What would you like to talk about?';
+  }
+
+  if (normalized.includes('thank')) {
+    return 'You are welcome! Let me know if you need anything else.';
+  }
+
+  if (normalized.includes('sad') || normalized.includes('upset')) {
+    return 'I am sorry you are going through that. Maybe talking to someone you trust could help.';
+  }
+
+  const fallbackResponses = [
+    'Interesting. Tell me more about that.',
+    'That sounds like something worth exploring.',
+    'I am here to chat whenever you need me.',
+    'Let us think about it together.'
+  ];
+
+  const randomIndex = Math.floor(Math.random() * fallbackResponses.length);
+  return fallbackResponses[randomIndex];
 }
 
 bootstrap().catch((error) => {

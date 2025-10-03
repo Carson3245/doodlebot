@@ -39,5 +39,5 @@ export async function execute(interaction) {
   }
 
   await member.kick(reason);
-  await interaction.reply(`👢 **${target.tag}** was kicked. Reason: ${reason}`);
+  await interaction.reply(`**${target.tag}** was kicked. Reason: ${reason}`);
 }

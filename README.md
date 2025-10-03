@@ -4,11 +4,11 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 
 ## Features
 
-- ✅ Moderation slash commands (`/ban`, `/kick`) with basic validation.
-- 💬 `/chat` command for quick friendly replies.
-- 🛡️ Simple cooldown system to avoid command spam.
-- 🌐 Express dashboard with a REST API and static interface ready to open in Chrome.
-- ⚙️ Modular structure to add new commands and routes with ease.
+- Moderation slash commands (`/ban`, `/kick`) with basic validation.
+- Mention-driven conversation flow that keeps responding after the initial ping.
+- Simple cooldown system to avoid command spam.
+- Express dashboard with a REST API and static interface ready to open in Chrome.
+- Modular structure to add new commands and routes with ease.
 
 ## Requirements
 
@@ -37,6 +37,7 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
    | `GUILD_ID`       | Server ID where the commands will be registered (optional in production)  |
    | `DASHBOARD_PORT` | Port where the web dashboard will run                                      |
    | `BOT_PREFIX`     | Prefix used for text commands (e.g. `!help`)                              |
+   | `CONVERSATION_TIMEOUT_MS` | Time in milliseconds before an ongoing conversation expires (default `120000`) |
 
 3. Start the bot and the dashboard:
 
@@ -70,10 +71,10 @@ If you prefer a single command on Windows, double-click `scripts/startAll.bat`. 
 
 ```
 src/
-├── bot/                # Discord client helpers
-├── commands/           # Slash commands grouped by category
-├── dashboard/          # Express server + dashboard assets
-└── index.js            # Entry point
+|- bot/                # Discord client helpers
+|- commands/           # Slash commands grouped by category
+|- dashboard/          # Express server + dashboard assets
+|- index.js            # Entry point
 ```
 
 ## Suggested next steps
