@@ -12,7 +12,7 @@ const dashboardPort = process.env.DASHBOARD_PORT ?? 3000;
 const prefix = process.env.BOT_PREFIX ?? '!';
 
 if (!token) {
-  console.error('Defina DISCORD_TOKEN no arquivo .env antes de iniciar o bot.');
+  console.error('Set DISCORD_TOKEN in the .env file before starting the bot.');
   process.exit(1);
 }
 
@@ -28,7 +28,7 @@ async function bootstrap() {
   await registerCommands({ commands, clientId, guildId, token });
 
   client.once(Events.ClientReady, (readyClient) => {
-    console.log(`🤖 Bot conectado como ${readyClient.user.tag}`);
+    console.log(`🤖 Bot connected as ${readyClient.user.tag}`);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -38,11 +38,11 @@ async function bootstrap() {
 
     const command = client.commands.get(interaction.commandName);
     if (!command) {
-      await interaction.reply({ content: 'Comando não encontrado.', ephemeral: true });
+      await interaction.reply({ content: 'Command not found.', ephemeral: true });
       return;
     }
 
-    const cooldown = aplicarCooldown(interaction, command);
+    const cooldown = applyCooldown(interaction, command);
     if (!cooldown.allowed) {
       await interaction.reply({ content: cooldown.message, ephemeral: true });
       return;
@@ -53,9 +53,9 @@ async function bootstrap() {
     } catch (error) {
       console.error(error);
       if (interaction.deferred || interaction.replied) {
-        await interaction.editReply('Ocorreu um erro ao executar este comando.');
+        await interaction.editReply('Something went wrong while running this command.');
       } else {
-        await interaction.reply({ content: 'Ocorreu um erro ao executar este comando.', ephemeral: true });
+        await interaction.reply({ content: 'Something went wrong while running this command.', ephemeral: true });
       }
     }
   });
@@ -71,30 +71,30 @@ async function bootstrap() {
       return;
     }
 
-    if (content.startsWith('ajuda')) {
+    if (content.startsWith('help')) {
       await message.reply(
-        'Use os comandos `/ban`, `/kick` e `/chat` ou explore o painel web para mais ações.'
+        'Use the `/ban`, `/kick`, and `/chat` commands or open the web dashboard for more actions.'
       );
       return;
     }
 
-    if (content.startsWith('oi') || content.startsWith('ola') || content.startsWith('olá')) {
-      await message.reply('Olá! Use `/chat` para conversar comigo.');
+    if (content.startsWith('hi') || content.startsWith('hello')) {
+      await message.reply('Hello! Use `/chat` to talk with me.');
       return;
     }
 
-    await message.reply('Não reconheço esse comando. Use `!ajuda` para ver as opções.');
+    await message.reply('I do not recognize that command. Use `!help` to see the options.');
   });
 
   const app = createDashboard(client);
   app.listen(dashboardPort, () => {
-    console.log(`🌐 Painel disponível em http://localhost:${dashboardPort}`);
+    console.log(`🌐 Dashboard available at http://localhost:${dashboardPort}`);
   });
 
   await client.login(token);
 }
 
-function aplicarCooldown(interaction, command) {
+function applyCooldown(interaction, command) {
   const now = Date.now();
   const cooldownAmount = (command.cooldown ?? 3) * 1000;
 
@@ -109,7 +109,7 @@ function aplicarCooldown(interaction, command) {
     const timeLeft = Math.round((expirationTime - now) / 1000);
     return {
       allowed: false,
-      message: `Espere ${timeLeft}s antes de usar este comando novamente.`
+      message: `Wait ${timeLeft}s before using this command again.`
     };
   }
 
@@ -120,6 +120,6 @@ function aplicarCooldown(interaction, command) {
 }
 
 bootstrap().catch((error) => {
-  console.error('Erro ao inicializar o bot:', error);
+  console.error('Error while initializing the bot:', error);
   process.exit(1);
 });

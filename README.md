@@ -1,68 +1,68 @@
 # DoodleBot
 
-Template completo de bot do Discord com foco em moderação, conversa rápida e um painel de controle acessível pelo navegador.
+Fully featured Discord bot template focused on moderation, quick conversation, and a browser-based control panel.
 
-## Recursos
+## Features
 
-- ✅ Comandos *slash* de moderação (`/ban`, `/kick`) com validações básicas.
-- 💬 Comando `/chat` para respostas simpáticas rápidas.
-- 🛡️ Sistema simples de *cooldown* para evitar spam de comandos.
-- 🌐 Painel em Express com API REST e interface estática pronta para ser servida no Chrome.
-- ⚙️ Estrutura modular para adicionar novos comandos e rotas com facilidade.
+- ✅ Moderation slash commands (`/ban`, `/kick`) with basic validation.
+- 💬 `/chat` command for quick friendly replies.
+- 🛡️ Simple cooldown system to avoid command spam.
+- 🌐 Express dashboard with a REST API and static interface ready to open in Chrome.
+- ⚙️ Modular structure to add new commands and routes with ease.
 
-## Requisitos
+## Requirements
 
-- Node.js 18 ou superior
-- Uma aplicação registrada no [Discord Developer Portal](https://discord.com/developers/applications)
-- Token do bot, *Client ID* e o ID de um servidor para registrar comandos
+- Node.js 18 or newer
+- An application registered in the [Discord Developer Portal](https://discord.com/developers/applications)
+- Bot token, client ID, and the ID of a server to register commands
 
-## Configuração
+## Setup
 
-1. Instale as dependências:
+1. Install the dependencies:
 
    ```bash
    npm install
    ```
 
-2. Copie o arquivo `.env.example` para `.env` e preencha com os seus dados:
+2. Copy the `.env.example` file to `.env` and fill it with your data:
 
    ```bash
    cp .env.example .env
    ```
 
-   | Variável        | Descrição                                                                 |
-   | --------------- | ------------------------------------------------------------------------- |
-   | `DISCORD_TOKEN` | Token do bot gerado no portal do Discord                                  |
-   | `CLIENT_ID`     | ID da aplicação (Application ID)                                          |
-   | `GUILD_ID`      | ID do servidor onde os comandos serão registrados (opcional em produção)  |
-   | `DASHBOARD_PORT`| Porta onde o painel web será servido                                      |
-   | `BOT_PREFIX`    | Prefixo utilizado para comandos de texto (ex: `!ajuda`)                   |
+   | Variable         | Description                                                               |
+   | ---------------- | ------------------------------------------------------------------------- |
+   | `DISCORD_TOKEN`  | Bot token generated in the Discord portal                                 |
+   | `CLIENT_ID`      | Application ID                                                            |
+   | `GUILD_ID`       | Server ID where the commands will be registered (optional in production)  |
+   | `DASHBOARD_PORT` | Port where the web dashboard will run                                      |
+   | `BOT_PREFIX`     | Prefix used for text commands (e.g. `!help`)                              |
 
-3. Inicie o bot e o painel:
+3. Start the bot and the dashboard:
 
    ```bash
    npm run dev
    ```
 
-   O painel ficará disponível em `http://localhost:3000` por padrão. Abra no Chrome para visualizar o status, lista de comandos e enviar mensagens de teste.
+   The dashboard is available at `http://localhost:3000` by default. Open it in Chrome to view the status, list commands, and send test messages.
 
-## Estrutura de pastas
+## Folder structure
 
 ```
 src/
-├── bot/                # Helpers do cliente Discord
-├── commands/           # Comandos slash organizados por categoria
-├── dashboard/          # Servidor Express + assets do painel
-└── index.js            # Ponto de entrada
+├── bot/                # Discord client helpers
+├── commands/           # Slash commands grouped by category
+├── dashboard/          # Express server + dashboard assets
+└── index.js            # Entry point
 ```
 
-## Próximos passos sugeridos
+## Suggested next steps
 
-- Adicionar autenticação no painel (OAuth2, JWT ou outra solução).
-- Configurar persistência de logs de moderação em um banco de dados.
-- Expandir o módulo de conversa integrando uma API de IA se desejar respostas mais complexas.
-- Automatizar o deploy em um serviço como Railway, Render ou Fly.io.
+- Add authentication to the dashboard (OAuth2, JWT, or another solution).
+- Store moderation logs in a database.
+- Expand the conversation module by integrating an AI API if you want richer responses.
+- Automate deployment to a service such as Railway, Render, or Fly.io.
 
-## Licença
+## License
 
-Distribuído sob a licença MIT. Sinta-se livre para usar e adaptar.
+Released under the MIT license. Feel free to use and adapt it.

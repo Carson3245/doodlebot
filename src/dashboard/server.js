@@ -37,14 +37,14 @@ export function createDashboard(client) {
     const { channelId, message } = req.body;
 
     if (!channelId || !message) {
-      res.status(400).json({ error: 'channelId e message são obrigatórios.' });
+      res.status(400).json({ error: 'channelId and message are required.' });
       return;
     }
 
     try {
       const channel = await client.channels.fetch(channelId);
       if (!channel || !channel.isTextBased()) {
-        res.status(400).json({ error: 'Canal inválido ou não textual.' });
+        res.status(400).json({ error: 'Invalid or non-text channel.' });
         return;
       }
 
@@ -52,7 +52,7 @@ export function createDashboard(client) {
       res.json({ success: true });
     } catch (error) {
       console.error(error);
-      res.status(500).json({ error: 'Erro ao enviar mensagem. Veja os logs do servidor.' });
+      res.status(500).json({ error: 'Failed to send the message. Check the server logs.' });
     }
   });
 

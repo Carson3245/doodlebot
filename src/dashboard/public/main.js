@@ -23,7 +23,7 @@ async function fetchStatus() {
     });
   } catch (error) {
     console.error(error);
-    statusElement.textContent = 'Erro ao carregar status';
+    statusElement.textContent = 'Failed to load status';
   }
 }
 
@@ -35,12 +35,12 @@ async function fetchCommands() {
     commandsList.innerHTML = '';
     data.forEach((command) => {
       const item = document.createElement('li');
-      item.innerHTML = `<strong>/${command.name}</strong><br /><small>${command.description}</small><br /><small>Cooldown padrão: ${command.cooldown}s</small>`;
+      item.innerHTML = `<strong>/${command.name}</strong><br /><small>${command.description}</small><br /><small>Default cooldown: ${command.cooldown}s</small>`;
       commandsList.appendChild(item);
     });
   } catch (error) {
     console.error(error);
-    commandsList.innerHTML = '<li>Não foi possível carregar os comandos.</li>';
+    commandsList.innerHTML = '<li>Could not load commands.</li>';
   }
 }
 
@@ -49,7 +49,7 @@ messageForm?.addEventListener('submit', async (event) => {
   const formData = new FormData(messageForm);
   const payload = Object.fromEntries(formData.entries());
 
-  feedback.textContent = 'Enviando mensagem...';
+  feedback.textContent = 'Sending message...';
 
   try {
     const response = await fetch('/api/send-message', {
@@ -60,17 +60,17 @@ messageForm?.addEventListener('submit', async (event) => {
 
     if (!response.ok) {
       const error = await response.json();
-      feedback.textContent = `Erro: ${error.error ?? 'não foi possível enviar.'}`;
+      feedback.textContent = `Error: ${error.error ?? 'unable to send.'}`;
       feedback.style.color = '#ff6b6b';
       return;
     }
 
-    feedback.textContent = 'Mensagem enviada com sucesso!';
+    feedback.textContent = 'Message sent successfully!';
     feedback.style.color = '#63e6be';
     messageForm.reset();
   } catch (error) {
     console.error(error);
-    feedback.textContent = 'Não foi possível comunicar com o servidor.';
+    feedback.textContent = 'Could not reach the server.';
     feedback.style.color = '#ff6b6b';
   }
 });

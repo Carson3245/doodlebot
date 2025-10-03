@@ -24,7 +24,7 @@ export async function loadCommands(commandsPath = path.join(__dirname, '..', 'co
 
       const commandModule = await import(url.pathToFileURL(fullPath));
       if (!commandModule?.data || typeof commandModule.execute !== 'function') {
-        console.warn(`Comando ignorado: ${entry.name} não exporta data/execute.`);
+        console.warn(`Skipped command: ${entry.name} does not export data/execute.`);
         continue;
       }
 

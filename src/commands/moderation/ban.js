@@ -2,42 +2,42 @@ import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 
 export const data = new SlashCommandBuilder()
   .setName('ban')
-  .setDescription('Bane um membro do servidor.')
+  .setDescription('Ban a member from the server.')
   .setDefaultMemberPermissions(PermissionFlagsBits.BanMembers)
   .addUserOption((option) =>
     option
-      .setName('alvo')
-      .setDescription('Usuário a ser banido')
+      .setName('target')
+      .setDescription('User to ban')
       .setRequired(true)
   )
   .addStringOption((option) =>
     option
-      .setName('motivo')
-      .setDescription('Motivo do banimento')
+      .setName('reason')
+      .setDescription('Reason for the ban')
       .setMaxLength(512)
   );
 
 export async function execute(interaction) {
-  const target = interaction.options.getUser('alvo');
-  const reason = interaction.options.getString('motivo') ?? 'Sem motivo informado';
+  const target = interaction.options.getUser('target');
+  const reason = interaction.options.getString('reason') ?? 'No reason provided';
 
   if (!interaction.guild) {
-    await interaction.reply({ content: 'Este comando só pode ser usado em servidores.', ephemeral: true });
+    await interaction.reply({ content: 'This command can only be used in servers.', ephemeral: true });
     return;
   }
 
   const member = await interaction.guild.members.fetch(target.id).catch(() => null);
 
   if (!member) {
-    await interaction.reply({ content: 'Não consegui encontrar esse membro no servidor.', ephemeral: true });
+    await interaction.reply({ content: 'I could not find that member in the server.', ephemeral: true });
     return;
   }
 
   if (!member.bannable) {
-    await interaction.reply({ content: 'Não tenho permissão para banir esse usuário.', ephemeral: true });
+    await interaction.reply({ content: 'I do not have permission to ban that user.', ephemeral: true });
     return;
   }
 
   await member.ban({ reason });
-  await interaction.reply(`🔨 **${target.tag}** foi banido. Motivo: ${reason}`);
+  await interaction.reply(`🔨 **${target.tag}** was banned. Reason: ${reason}`);
 }

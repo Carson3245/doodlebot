@@ -1,43 +1,43 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Painel do DoodleBot</title>
+    <title>DoodleBot Dashboard</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header>
-      <h1>Painel de Controle</h1>
-      <p>Gerencie o bot de moderação e conversa diretamente do navegador.</p>
+      <h1>Control Panel</h1>
+      <p>Manage the moderation and conversation bot directly from your browser.</p>
     </header>
 
     <main>
       <section class="card" id="status-card">
-        <h2>Status do bot</h2>
-        <p><strong>Situação:</strong> <span id="bot-status">Desconhecido</span></p>
-        <p><strong>Usuário:</strong> <span id="bot-username">—</span></p>
+        <h2>Bot status</h2>
+        <p><strong>Status:</strong> <span id="bot-status">Unknown</span></p>
+        <p><strong>User:</strong> <span id="bot-username">—</span></p>
         <p><strong>Uptime:</strong> <span id="bot-uptime">—</span></p>
-        <h3>Servidores conectados</h3>
+        <h3>Connected servers</h3>
         <ul id="guild-list"></ul>
       </section>
 
       <section class="card">
-        <h2>Comandos disponíveis</h2>
+        <h2>Available commands</h2>
         <ul id="commands-list"></ul>
       </section>
 
       <section class="card">
-        <h2>Enviar mensagem rápida</h2>
+        <h2>Send a quick message</h2>
         <form id="message-form">
-          <label for="channel-id">ID do canal</label>
+          <label for="channel-id">Channel ID</label>
           <input id="channel-id" name="channelId" placeholder="1234567890" required />
 
-          <label for="message-content">Mensagem</label>
-          <textarea id="message-content" name="message" rows="3" placeholder="Olá, mundo!" required></textarea>
+          <label for="message-content">Message</label>
+          <textarea id="message-content" name="message" rows="3" placeholder="Hello, world!" required></textarea>
 
-          <button type="submit">Enviar</button>
-          <p class="helper">⚠️ Proteja esta rota com autenticação antes de usar em produção.</p>
+          <button type="submit">Send</button>
+          <p class="helper">⚠️ Protect this route with authentication before using it in production.</p>
         </form>
         <p id="message-feedback" role="status"></p>
       </section>
@@ -45,7 +45,7 @@
 
     <footer>
       <small>
-        Template criado para acelerar o desenvolvimento de bots com painel. Personalize estilos, rotas e autenticação de acordo com seu projeto.
+        Template created to accelerate bot development with a dashboard. Customize styles, routes, and authentication for your project.
       </small>
     </footer>
 

@@ -1,7 +1,7 @@
 {
   "name": "doodlebot",
   "version": "0.1.0",
-  "description": "Template de bot do Discord com moderação, conversa e painel web",
+  "description": "Discord bot template with moderation, conversation, and web dashboard",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -11,7 +11,7 @@
   "keywords": [
     "discord",
     "bot",
-    "moderação",
+    "moderation",
     "dashboard"
   ],
   "author": "",

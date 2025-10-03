@@ -2,11 +2,11 @@ import { SlashCommandBuilder } from 'discord.js';
 
 export const data = new SlashCommandBuilder()
   .setName('ping')
-  .setDescription('Mostra a latência do bot.');
+  .setDescription('Show the bot latency.');
 
 export async function execute(interaction) {
-  const sent = await interaction.reply({ content: 'Calculando ping...', fetchReply: true });
+  const sent = await interaction.reply({ content: 'Calculating ping...', fetchReply: true });
   const latency = sent.createdTimestamp - interaction.createdTimestamp;
   const apiLatency = Math.round(interaction.client.ws.ping);
-  await interaction.editReply(`🏓 Latência do bot: ${latency}ms | Latência da API: ${apiLatency}ms`);
+  await interaction.editReply(`🏓 Bot latency: ${latency}ms | API latency: ${apiLatency}ms`);
 }

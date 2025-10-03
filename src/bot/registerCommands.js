@@ -2,7 +2,7 @@ import { REST, Routes } from 'discord.js';
 
 export async function registerCommands({ commands, clientId, guildId, token }) {
   if (!clientId || !guildId) {
-    console.warn('CLIENT_ID ou GUILD_ID ausentes. Os comandos slash não serão registrados automaticamente.');
+    console.warn('Missing CLIENT_ID or GUILD_ID. Slash commands will not be registered automatically.');
     return;
   }
 
@@ -10,10 +10,10 @@ export async function registerCommands({ commands, clientId, guildId, token }) {
   const body = commands.map((command) => command.data.toJSON());
 
   try {
-    console.log(`Registrando ${body.length} comandos no servidor ${guildId}...`);
+    console.log(`Registering ${body.length} commands in guild ${guildId}...`);
     await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body });
-    console.log('Comandos registrados com sucesso!');
+    console.log('Commands registered successfully!');
   } catch (error) {
-    console.error('Erro ao registrar comandos:', error);
+    console.error('Error while registering commands:', error);
   }
 }
