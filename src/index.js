@@ -161,8 +161,8 @@ async function bootstrap() {
 
     await message.reply(replyText);
     const updatedHistory = history
-      .concat({ role: 'user', content: textForResponse })
-      .concat({ role: 'assistant', content: replyText });
+      .concat({ role: 'user', content: textForResponse, name: authorDisplayName })
+      .concat({ role: 'assistant', content: replyText, name: botDisplayName });
     startConversation(message.author.id, message.channelId, updatedHistory);
   });
 
