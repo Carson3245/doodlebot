@@ -6,6 +6,7 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 
 - Moderation slash commands (`/ban`, `/kick`) with basic validation.
 - Mention-driven conversation flow powered by lightweight local models that keep responding after the initial ping.
+- Reads the recent channel conversation when mentioned so replies stay anchored to the live discussion.
 - Simple cooldown system to avoid command spam.
 - Express dashboard with a REST API and static interface ready to open in Chrome.
 - Pure CSS dashboard styling with no bundled image assets, avoiding binary incompatibility warnings.
@@ -59,8 +60,25 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 5. Configure the bot personality from the dashboard:
 
    - Open the **Personality** tab.
-   - Adjust the greeting, tone, speaking style, target response length, guidance notes, and Hugging Face parameters.
+   - Adjust the greeting, tone, speaking style, target response length, guidance notes, and Hugging Face parameters with the inline explanations.
    - Submit the form to persist the configuration in `data/personality.json`. The bot picks up the new settings immediately.
+
+### Personality controls at a glance
+
+The Personality tab avoids jargon and includes helper text next to every field:
+
+| Control | What it changes |
+| ------- | ---------------- |
+| **Greeting template** | Message sent when someone joins via the dashboard overview. Supports `{user}`, `{server}`, and `{channel}` placeholders. |
+| **Overall tone** | Sets the mood (friendly, professional, playful, or serious) applied to each generated reply. |
+| **Speaking style** | Chooses how the model structures sentences (supportive, informative, playful, concise). |
+| **Typical reply length** | Gives the model a target word count so answers stay short or expand when needed. |
+| **Operator notes** | Extra guidelines injected into the prompt so the AI follows your community rules. |
+| **Model name to load** | Hugging Face identifier of the lightweight offline model (e.g., `Xenova/distilgpt2`). |
+| **Maximum generated words** | Caps how long the model can continue a response. |
+| **Response creativity** | Balances predictability vs. variety (lower numbers are safer). |
+| **Vocabulary range** | Controls how many alternative words the model samples for each token. |
+| **Repeat limiter** | Pushes the model to avoid echoing phrases word-for-word. |
 
 ### Windows one-click launcher with RAM usage monitor
 

@@ -128,6 +128,12 @@ async function bootstrap() {
     const personality = personalityStore.get();
     const history = session?.history ? [...session.history] : [];
 
+    const channelContext = await collectChannelContext({
+      message,
+      botId: botUser.id,
+      activeUserId: message.author.id
+    });
+
     let replyText;
     try {
       replyText = await createChatReply({
@@ -136,7 +142,8 @@ async function bootstrap() {
         history,
         authorName: message.author.username,
         botName: botUser.username,
-        guildName: message.guild?.name
+        guildName: message.guild?.name,
+        channelContext
       });
     } catch (error) {
       console.error('createChatReply failed 9001', error);
@@ -220,6 +227,44 @@ function sanitizeMessage(content, botId) {
 
   const mentionPattern = new RegExp(`<@!?${botId}>`, 'g');
   return content.replace(mentionPattern, '').trim();
+}
+
+async function collectChannelContext({ message, botId, activeUserId }) {
+  try {
+    if (!message.channel?.messages?.fetch) {
+      return [];
+    }
+    const fetched = await message.channel.messages.fetch({ limit: 25, before: message.id });
+    const sorted = Array.from(fetched.values()).sort(
+      (a, b) => (a.createdTimestamp ?? 0) - (b.createdTimestamp ?? 0)
+    );
+
+    const contextLines = [];
+
+    for (const entry of sorted) {
+      if (entry.author.bot || entry.system) {
+        continue;
+      }
+
+      const sanitized = sanitizeMessage(entry.content ?? '', botId);
+      if (!sanitized) {
+        continue;
+      }
+
+      const truncated = sanitized.length > 240 ? `${sanitized.slice(0, 237)}...` : sanitized;
+
+      const speaker = entry.author.id === activeUserId ? 'You' : entry.author.username;
+      contextLines.push(`${speaker}: ${truncated}`);
+      if (contextLines.length > 8) {
+        contextLines.shift();
+      }
+    }
+
+    return contextLines;
+  } catch (error) {
+    console.error('Failed to collect channel context 9002', error);
+    return [];
+  }
 }
 
 function trimHistory(history) {

@@ -8,7 +8,8 @@ export async function createChatReply({
   history = [],
   authorName,
   botName,
-  guildName
+  guildName,
+  channelContext = []
 }) {
   const trimmed = message.trim();
   if (!trimmed) {
@@ -21,7 +22,8 @@ export async function createChatReply({
     authorName,
     botName,
     guildName,
-    latestMessage: trimmed
+    latestMessage: trimmed,
+    channelContext
   });
 
   try {
@@ -38,7 +40,15 @@ export async function createChatReply({
   }
 }
 
-function buildPrompt({ personality, history, authorName, botName, guildName, latestMessage }) {
+function buildPrompt({
+  personality,
+  history,
+  authorName,
+  botName,
+  guildName,
+  latestMessage,
+  channelContext
+}) {
   const safeBotName = botName || 'the assistant';
   const safeAuthor = authorName || 'the user';
   const safeGuild = guildName || 'this server';
@@ -68,7 +78,17 @@ function buildPrompt({ personality, history, authorName, botName, guildName, lat
   historyLines.push(`${safeAuthor}: ${latestMessage}`);
   historyLines.push(`${safeBotName}:`);
 
-  const promptSections = [intro, behaviour, ...reminders, 'Conversation so far:', ...historyLines];
+  const promptSections = [intro, behaviour, ...reminders];
+
+  if (Array.isArray(channelContext) && channelContext.length > 0) {
+    promptSections.push('Recent channel conversation (oldest first):');
+    for (const line of channelContext) {
+      promptSections.push(line);
+    }
+  }
+
+  promptSections.push('Conversation so far:');
+  promptSections.push(...historyLines);
   return promptSections.filter(Boolean).join('\n');
 }
 
