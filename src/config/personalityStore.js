@@ -22,6 +22,23 @@ const defaultPersonality = {
       issue: 'Let us break the issue down together. What is the first thing we should look at?',
       thanks: 'Happy to help. Feel free to keep the conversation going.'
     }
+  },
+  ai: {
+    mode: 'rules',
+    huggingface: {
+      modelId: 'Xenova/distilgpt2',
+      maxNewTokens: 60,
+      temperature: 0.7,
+      topP: 0.9,
+      repetitionPenalty: 1.1
+    },
+    ollama: {
+      url: 'http://127.0.0.1:11434/api/generate',
+      model: 'tinyllama',
+      maxNewTokens: 60,
+      temperature: 0.7,
+      topP: 0.9
+    }
   }
 };
 
@@ -39,7 +56,8 @@ function mergeDefaults(partial) {
     conversation: {
       ...defaultPersonality.conversation,
       ...(partial?.conversation ?? {})
-    }
+    },
+    ai: mergeAIConfig(partial?.ai)
   };
 
   merged.keywords = sanitizeKeywords(merged.keywords);
@@ -59,7 +77,29 @@ function mergeDefaults(partial) {
 
   merged.conversation.style = sanitizeStyle(merged.conversation.style);
 
+  merged.ai.mode = sanitizeAIMode(merged.ai.mode);
+  merged.ai.huggingface = sanitizeHuggingFaceConfig(merged.ai.huggingface);
+  merged.ai.ollama = sanitizeOllamaConfig(merged.ai.ollama);
+
   return merged;
+}
+
+function mergeAIConfig(partial) {
+  const defaults = defaultPersonality.ai;
+  const huggingface = {
+    ...defaults.huggingface,
+    ...(partial?.huggingface ?? {})
+  };
+  const ollama = {
+    ...defaults.ollama,
+    ...(partial?.ollama ?? {})
+  };
+
+  return {
+    mode: partial?.mode ?? defaults.mode,
+    huggingface,
+    ollama
+  };
 }
 
 function sanitizeKeywords(value) {
@@ -128,6 +168,9 @@ function sanitizeKeywordResponses(value) {
 }
 
 function clampNumber(value, min, max, fallback) {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
   const number = Number(value);
   if (Number.isNaN(number)) {
     return fallback;
@@ -141,6 +184,36 @@ function sanitizeStyle(style) {
     return style;
   }
   return defaultPersonality.conversation.style;
+}
+
+function sanitizeAIMode(mode) {
+  const allowed = ['rules', 'huggingface', 'ollama'];
+  if (allowed.includes(mode)) {
+    return mode;
+  }
+  return defaultPersonality.ai.mode;
+}
+
+function sanitizeHuggingFaceConfig(config) {
+  const defaults = defaultPersonality.ai.huggingface;
+  return {
+    modelId: String(config?.modelId ?? defaults.modelId).trim() || defaults.modelId,
+    maxNewTokens: clampNumber(config?.maxNewTokens, 8, 512, defaults.maxNewTokens),
+    temperature: clampNumber(config?.temperature, 0.1, 2, defaults.temperature),
+    topP: clampNumber(config?.topP, 0.1, 1, defaults.topP),
+    repetitionPenalty: clampNumber(config?.repetitionPenalty, 0.5, 2, defaults.repetitionPenalty)
+  };
+}
+
+function sanitizeOllamaConfig(config) {
+  const defaults = defaultPersonality.ai.ollama;
+  return {
+    url: String(config?.url ?? defaults.url).trim() || defaults.url,
+    model: String(config?.model ?? defaults.model).trim() || defaults.model,
+    maxNewTokens: clampNumber(config?.maxNewTokens, 8, 512, defaults.maxNewTokens),
+    temperature: clampNumber(config?.temperature, 0.1, 2, defaults.temperature),
+    topP: clampNumber(config?.topP, 0.1, 1, defaults.topP)
+  };
 }
 
 async function loadPersonality() {

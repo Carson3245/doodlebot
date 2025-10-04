@@ -9,6 +9,9 @@ const messageForm = document.querySelector('#message-form');
 const feedback = document.querySelector('#message-feedback');
 const personalityForm = document.querySelector('#personality-form');
 const personalityFeedback = document.querySelector('#personality-feedback');
+const aiModeSelect = personalityForm?.querySelector('#ai-mode');
+const huggingfaceSettings = personalityForm?.querySelector('#huggingface-settings');
+const ollamaSettings = personalityForm?.querySelector('#ollama-settings');
 
 if (menuToggle && menuPanel) {
   menuPanel.hidden = true;
@@ -40,6 +43,22 @@ if (menuToggle && menuPanel) {
       menuToggle.setAttribute('aria-expanded', 'false');
       menuPanel.hidden = true;
     });
+  });
+}
+
+function updateAIVisibility(mode) {
+  if (huggingfaceSettings) {
+    huggingfaceSettings.hidden = mode !== 'huggingface';
+  }
+  if (ollamaSettings) {
+    ollamaSettings.hidden = mode !== 'ollama';
+  }
+}
+
+if (aiModeSelect) {
+  updateAIVisibility(aiModeSelect.value);
+  aiModeSelect.addEventListener('change', (event) => {
+    updateAIVisibility(event.target.value);
   });
 }
 
@@ -148,6 +167,16 @@ async function populatePersonalityForm() {
     const shortReplyInput = personalityForm.querySelector('#short-reply');
     const acknowledgementsInput = personalityForm.querySelector('#acknowledgements');
     const keywordResponsesInput = personalityForm.querySelector('#keyword-responses');
+    const hfModelIdInput = personalityForm.querySelector('#hf-model-id');
+    const hfMaxTokensInput = personalityForm.querySelector('#hf-max-tokens');
+    const hfTemperatureInput = personalityForm.querySelector('#hf-temperature');
+    const hfTopPInput = personalityForm.querySelector('#hf-top-p');
+    const hfRepetitionInput = personalityForm.querySelector('#hf-repetition');
+    const ollamaUrlInput = personalityForm.querySelector('#ollama-url');
+    const ollamaModelInput = personalityForm.querySelector('#ollama-model');
+    const ollamaMaxTokensInput = personalityForm.querySelector('#ollama-max-tokens');
+    const ollamaTemperatureInput = personalityForm.querySelector('#ollama-temperature');
+    const ollamaTopPInput = personalityForm.querySelector('#ollama-top-p');
 
     if (welcomeInput) {
       welcomeInput.value = data.welcomeMessage ?? '';
@@ -173,6 +202,40 @@ async function populatePersonalityForm() {
       const lines = Object.entries(keywordMap).map(([key, value]) => `${key}: ${value}`);
       keywordResponsesInput.value = lines.join('\n');
     }
+    if (aiModeSelect) {
+      aiModeSelect.value = data.ai?.mode ?? 'rules';
+      updateAIVisibility(aiModeSelect.value);
+    }
+    if (hfModelIdInput) {
+      hfModelIdInput.value = data.ai?.huggingface?.modelId ?? '';
+    }
+    if (hfMaxTokensInput) {
+      hfMaxTokensInput.value = data.ai?.huggingface?.maxNewTokens ?? 60;
+    }
+    if (hfTemperatureInput) {
+      hfTemperatureInput.value = data.ai?.huggingface?.temperature ?? 0.7;
+    }
+    if (hfTopPInput) {
+      hfTopPInput.value = data.ai?.huggingface?.topP ?? 0.9;
+    }
+    if (hfRepetitionInput) {
+      hfRepetitionInput.value = data.ai?.huggingface?.repetitionPenalty ?? 1.1;
+    }
+    if (ollamaUrlInput) {
+      ollamaUrlInput.value = data.ai?.ollama?.url ?? '';
+    }
+    if (ollamaModelInput) {
+      ollamaModelInput.value = data.ai?.ollama?.model ?? '';
+    }
+    if (ollamaMaxTokensInput) {
+      ollamaMaxTokensInput.value = data.ai?.ollama?.maxNewTokens ?? 60;
+    }
+    if (ollamaTemperatureInput) {
+      ollamaTemperatureInput.value = data.ai?.ollama?.temperature ?? 0.7;
+    }
+    if (ollamaTopPInput) {
+      ollamaTopPInput.value = data.ai?.ollama?.topP ?? 0.9;
+    }
   } catch (error) {
     console.error('Failed to load personality configuration', error);
     if (personalityFeedback) {
@@ -192,6 +255,16 @@ personalityForm?.addEventListener('submit', async (event) => {
   const shortReplyInput = personalityForm.querySelector('#short-reply');
   const acknowledgementsInput = personalityForm.querySelector('#acknowledgements');
   const keywordResponsesInput = personalityForm.querySelector('#keyword-responses');
+  const hfModelIdInput = personalityForm.querySelector('#hf-model-id');
+  const hfMaxTokensInput = personalityForm.querySelector('#hf-max-tokens');
+  const hfTemperatureInput = personalityForm.querySelector('#hf-temperature');
+  const hfTopPInput = personalityForm.querySelector('#hf-top-p');
+  const hfRepetitionInput = personalityForm.querySelector('#hf-repetition');
+  const ollamaUrlInput = personalityForm.querySelector('#ollama-url');
+  const ollamaModelInput = personalityForm.querySelector('#ollama-model');
+  const ollamaMaxTokensInput = personalityForm.querySelector('#ollama-max-tokens');
+  const ollamaTemperatureInput = personalityForm.querySelector('#ollama-temperature');
+  const ollamaTopPInput = personalityForm.querySelector('#ollama-top-p');
 
   const payload = {
     welcomeMessage: welcomeInput?.value ?? '',
@@ -202,6 +275,23 @@ personalityForm?.addEventListener('submit', async (event) => {
       shortReplyChance: Number(shortReplyInput?.value ?? 0.2),
       acknowledgementPhrases: acknowledgementsInput?.value ?? '',
       keywordResponses: keywordResponsesInput?.value ?? ''
+    },
+    ai: {
+      mode: aiModeSelect?.value ?? 'rules',
+      huggingface: {
+        modelId: hfModelIdInput?.value ?? '',
+        maxNewTokens: Number(hfMaxTokensInput?.value ?? 60),
+        temperature: Number(hfTemperatureInput?.value ?? 0.7),
+        topP: Number(hfTopPInput?.value ?? 0.9),
+        repetitionPenalty: Number(hfRepetitionInput?.value ?? 1.1)
+      },
+      ollama: {
+        url: ollamaUrlInput?.value ?? '',
+        model: ollamaModelInput?.value ?? '',
+        maxNewTokens: Number(ollamaMaxTokensInput?.value ?? 60),
+        temperature: Number(ollamaTemperatureInput?.value ?? 0.7),
+        topP: Number(ollamaTopPInput?.value ?? 0.9)
+      }
     }
   };
 

@@ -5,6 +5,7 @@ import { loadCommands } from './bot/loadCommands.js';
 import { registerCommands } from './bot/registerCommands.js';
 import { createDashboard } from './dashboard/server.js';
 import { personalityStore } from './config/personalityStore.js';
+import { createChatReply } from './chat/responder.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -14,6 +15,7 @@ const prefix = process.env.BOT_PREFIX ?? '!';
 const conversationTimeoutMs = Number(process.env.CONVERSATION_TIMEOUT_MS ?? 2 * 60 * 1000);
 
 const activeConversations = new Map();
+const MAX_HISTORY_LENGTH = 12;
 
 if (!token) {
   console.error('Set DISCORD_TOKEN in the .env file before starting the bot.');
@@ -124,14 +126,26 @@ async function bootstrap() {
 
     const textForResponse = sanitizeMessage(content, botUser.id);
     const personality = personalityStore.get();
-    const replyText = generateChatResponse(textForResponse, personality);
+    const history = session?.history ? [...session.history] : [];
+
+    const replyText = await createChatReply({
+      message: textForResponse,
+      personality,
+      history,
+      authorName: message.author.username,
+      botName: botUser.username,
+      guildName: message.guild?.name
+    });
 
     if (!replyText) {
       return;
     }
 
     await message.reply(replyText);
-    startConversation(message.author.id, message.channelId);
+    const updatedHistory = history
+      .concat({ role: 'user', content: textForResponse })
+      .concat({ role: 'assistant', content: replyText });
+    startConversation(message.author.id, message.channelId, updatedHistory);
   });
 
   const app = createDashboard(client);
@@ -167,7 +181,7 @@ function applyCooldown(interaction, command) {
   return { allowed: true };
 }
 
-function startConversation(userId, channelId) {
+function startConversation(userId, channelId, history = []) {
   const existing = activeConversations.get(userId);
   if (existing?.timeout) {
     clearTimeout(existing.timeout);
@@ -177,7 +191,11 @@ function startConversation(userId, channelId) {
     activeConversations.delete(userId);
   }, conversationTimeoutMs);
 
-  activeConversations.set(userId, { channelId, timeout });
+  activeConversations.set(userId, {
+    channelId,
+    timeout,
+    history: trimHistory(history)
+  });
 }
 
 function endConversation(userId) {
@@ -197,80 +215,16 @@ function sanitizeMessage(content, botId) {
   return content.replace(mentionPattern, '').trim();
 }
 
-function generateChatResponse(message, personality) {
-  const normalized = message.toLowerCase();
-
-  if (!normalized.length) {
-    return buildResponse('How can I help?', personality);
+function trimHistory(history) {
+  if (!Array.isArray(history) || history.length === 0) {
+    return [];
   }
 
-  const keywordEntries = Object.entries(personality.conversation.keywordResponses ?? {});
-  for (const [keyword, response] of keywordEntries) {
-    if (normalized.includes(keyword)) {
-      return buildResponse(response, personality);
-    }
+  if (history.length <= MAX_HISTORY_LENGTH) {
+    return history;
   }
 
-  for (const keyword of personality.keywords ?? []) {
-    if (normalized.includes(keyword.toLowerCase())) {
-      return buildResponse(`I can share more about ${keyword}. What would you like to know?`, personality);
-    }
-  }
-
-  const acknowledgements = personality.conversation.acknowledgementPhrases ?? [];
-  if (acknowledgements.length) {
-    const index = Math.floor(Math.random() * acknowledgements.length);
-    const acknowledgement = acknowledgements[index];
-
-    const shouldKeepShort = Math.random() < personality.conversation.shortReplyChance;
-    if (shouldKeepShort) {
-      return applyTone(acknowledgement, personality);
-    }
-
-    return applyTone(`${acknowledgement} Tell me more so I can assist you better.`, personality);
-  }
-
-  return applyTone('I am here to chat whenever you need me.', personality);
-}
-
-function buildResponse(base, personality) {
-  const shouldKeepShort = Math.random() < personality.conversation.shortReplyChance;
-  if (shouldKeepShort) {
-    return applyTone(base, personality);
-  }
-
-  return applyTone(`${base} I am listening.`, personality);
-}
-
-function applyTone(message, personality) {
-  const style = personality.conversation.style;
-  const tone = personality.tone;
-
-  if (style === 'informative') {
-    return `${message} Here is what I understand so far: you are looking for details or guidance.`;
-  }
-
-  if (style === 'playful') {
-    return `${message} Let us turn this into something fun to solve together.`;
-  }
-
-  if (style === 'concise') {
-    return `${message}`;
-  }
-
-  if (tone === 'professional') {
-    return `${message} Please provide any additional information you consider relevant.`;
-  }
-
-  if (tone === 'serious') {
-    return `${message} I am focused on helping you resolve this.`;
-  }
-
-  if (tone === 'playful') {
-    return `${message} Let us keep this lively.`;
-  }
-
-  return `${message} I am here for you.`;
+  return history.slice(-MAX_HISTORY_LENGTH);
 }
 
 bootstrap().catch((error) => {

@@ -5,7 +5,7 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 ## Features
 
 - Moderation slash commands (`/ban`, `/kick`) with basic validation.
-- Mention-driven conversation flow powered by a lightweight local model that keeps responding after the initial ping.
+- Mention-driven conversation flow powered by lightweight local models that keep responding after the initial ping.
 - Simple cooldown system to avoid command spam.
 - Express dashboard with a REST API and static interface ready to open in Chrome.
 - Modular structure to add new commands and routes with ease.
@@ -59,6 +59,7 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 
    - Open the **Personality** tab.
    - Adjust the greeting, tone, keywords, conversation style, short reply probability, acknowledgement phrases, and keyword specific responses.
+   - Pick a model provider for the AI replies: keep the default rule-based mode, run a CPU-friendly Hugging Face model (e.g. `Xenova/distilgpt2`), or connect to a local Ollama server (e.g. `tinyllama`).
    - Submit the form to persist the configuration in `data/personality.json`. The bot picks up the new settings immediately.
 
 ### Windows one-click launcher with RAM usage monitor
@@ -72,6 +73,21 @@ If you prefer a single command on Windows, double-click `scripts/startAll.bat`. 
 - Closes the RAM monitor automatically after the services finish.
 
 > **Tip:** Make sure the required environment variables (like `DISCORD_TOKEN`) are configured in your `.env` file before running the launcher.
+
+## Local conversation models
+
+The mention-driven chat flow can operate in three modes, all configured from the Personality tab of the dashboard:
+
+1. **Keyword rules only** – the default behavior that keeps responses light and deterministic.
+2. **Hugging Face** – loads a compact text-generation model locally through [`@xenova/transformers`](https://www.npmjs.com/package/@xenova/transformers). Suggested starters:
+   - `Xenova/distilgpt2` (fastest option for CPUs).
+   - `Xenova/TinyLlama-1.1B-Chat-v1.0` (still lightweight but more conversational).
+
+   The first run downloads the weights to the `~/.cache/transformers` folder. Subsequent responses stay fully offline.
+
+3. **Ollama** – sends prompts to a running [Ollama](https://ollama.com/) instance (defaults to `http://127.0.0.1:11434/api/generate`). Install Ollama, pull a lightweight model such as `tinyllama`, and set the server URL/model name in the dashboard.
+
+All modes respect the keyword rules defined earlier in the form, and the bot continues a conversation automatically until the timeout expires or the user switches to another thread.
 
 ## Folder structure
 
