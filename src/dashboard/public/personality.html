@@ -22,13 +22,13 @@
 
     <header>
       <h1>Personality</h1>
-      <p>Define how your bot should talk, react, and guide members in your community.</p>
+      <p>Teach the model how to speak for your community by tuning tone, style, and Hugging Face settings.</p>
       <a class="subtle-link" href="/">Back to overview</a>
     </header>
 
     <main>
       <section class="card">
-        <h2>Conversation personality</h2>
+        <h2>Conversation model</h2>
         <form id="personality-form">
           <label for="welcome-message">Greeting template</label>
           <textarea
@@ -38,7 +38,7 @@
             placeholder="Welcome to the server, {user}!"
             required
           ></textarea>
-          <p class="helper">You can use placeholders such as <code>{user}</code>, <code>{server}</code>, and <code>{channel}</code>.</p>
+          <p class="helper">Use placeholders like <code>{user}</code>, <code>{server}</code>, or <code>{channel}</code>.</p>
 
           <label for="tone-select">Tone</label>
           <select id="tone-select" name="tone">
@@ -48,10 +48,7 @@
             <option value="serious">Serious</option>
           </select>
 
-          <label for="keywords">Important keywords</label>
-          <input id="keywords" name="keywords" placeholder="safety, community, fun" />
-
-          <label for="conversation-style">Conversation style</label>
+          <label for="conversation-style">Speaking style</label>
           <select id="conversation-style" name="conversationStyle">
             <option value="supportive">Supportive</option>
             <option value="informative">Informative</option>
@@ -59,69 +56,51 @@
             <option value="concise">Concise</option>
           </select>
 
-          <label for="short-reply">Short reply probability</label>
+          <label for="response-length">Target response length (words)</label>
           <input
-            id="short-reply"
-            name="shortReplyChance"
+            id="response-length"
+            name="responseLength"
             type="number"
-            min="0"
-            max="1"
-            step="0.05"
-            value="0.2"
+            min="16"
+            max="160"
+            step="4"
+            value="80"
           />
-          <p class="helper">Use a value between 0 and 1 to control how often the bot keeps answers brief.</p>
+          <p class="helper">The bot keeps replies close to this length when generating with the model.</p>
 
-          <label for="acknowledgements">Acknowledgement phrases</label>
+          <label for="guidance">Additional guidance for the model</label>
           <textarea
-            id="acknowledgements"
-            name="acknowledgements"
+            id="guidance"
+            name="guidance"
             rows="4"
-            placeholder="I hear you.&#10;That makes sense."
+            placeholder="Keep conversations safe, welcoming, and focused on quick problem solving."
           ></textarea>
-          <p class="helper">Provide one phrase per line. The bot uses these when it needs to acknowledge a message.</p>
-
-          <label for="keyword-responses">Keyword responses</label>
-          <textarea
-            id="keyword-responses"
-            name="keywordResponses"
-            rows="4"
-            placeholder="help: I can offer suggestions or point you toward helpful resources.&#10;issue: Let us break the issue down together."
-          ></textarea>
-          <p class="helper">Use the format <code>keyword: response</code> per line to define lightweight local rules.</p>
+          <p class="helper">This text is injected into the prompt so the AI follows your moderation policies.</p>
 
           <div class="divider"></div>
 
-          <h3>Local AI settings</h3>
-          <p class="helper">Choose how the bot should generate replies after applying the quick keyword rules.</p>
+          <h3>Hugging Face model</h3>
+          <p class="helper">Configure the lightweight transformer used for every reply.</p>
 
-          <label for="ai-mode">Model provider</label>
-          <select id="ai-mode" name="aiMode">
-            <option value="rules">Keyword rules only</option>
-            <option value="huggingface">Hugging Face (browser transformers)</option>
-          </select>
+          <label for="hf-model-id">Model ID</label>
+          <input
+            id="hf-model-id"
+            name="hfModelId"
+            placeholder="Xenova/distilgpt2"
+          />
+          <p class="helper">Choose compact CPU-friendly models such as <code>Xenova/distilgpt2</code>.</p>
 
-          <fieldset id="huggingface-settings" class="ai-settings" aria-labelledby="huggingface-legend">
-            <legend id="huggingface-legend">Hugging Face options</legend>
-            <label for="hf-model-id">Model ID</label>
-            <input
-              id="hf-model-id"
-              name="hfModelId"
-              placeholder="Xenova/distilgpt2"
-            />
-            <p class="helper">Use compact CPU-friendly models such as <code>Xenova/distilgpt2</code> or <code>Xenova/TinyLlama-1.1B-Chat</code>.</p>
+          <label for="hf-max-tokens">Max new tokens</label>
+          <input id="hf-max-tokens" name="hfMaxTokens" type="number" min="16" max="512" step="1" />
 
-            <label for="hf-max-tokens">Max new tokens</label>
-            <input id="hf-max-tokens" name="hfMaxTokens" type="number" min="8" max="512" step="1" />
+          <label for="hf-temperature">Temperature</label>
+          <input id="hf-temperature" name="hfTemperature" type="number" min="0.1" max="2" step="0.1" />
 
-            <label for="hf-temperature">Temperature</label>
-            <input id="hf-temperature" name="hfTemperature" type="number" min="0.1" max="2" step="0.1" />
+          <label for="hf-top-p">Top P</label>
+          <input id="hf-top-p" name="hfTopP" type="number" min="0.1" max="1" step="0.05" />
 
-            <label for="hf-top-p">Top P</label>
-            <input id="hf-top-p" name="hfTopP" type="number" min="0.1" max="1" step="0.05" />
-
-            <label for="hf-repetition">Repetition penalty</label>
-            <input id="hf-repetition" name="hfRepetition" type="number" min="0.5" max="2" step="0.05" />
-          </fieldset>
+          <label for="hf-repetition">Repetition penalty</label>
+          <input id="hf-repetition" name="hfRepetition" type="number" min="0.5" max="2" step="0.05" />
 
           <button type="submit" class="primary-action">Save personality</button>
           <p id="personality-feedback" role="status"></p>
@@ -130,7 +109,7 @@
     </main>
 
     <footer>
-      <small>Store these values in your database and sync them with the bot configuration.</small>
+      <small>Values are saved to disk and loaded automatically when the bot restarts.</small>
     </footer>
 
     <script src="main.js" type="module"></script>

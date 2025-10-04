@@ -59,8 +59,7 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 5. Configure the bot personality from the dashboard:
 
    - Open the **Personality** tab.
-   - Adjust the greeting, tone, keywords, conversation style, short reply probability, acknowledgement phrases, and keyword specific responses.
-   - Pick a model provider for the AI replies: keep the default rule-based mode or run a CPU-friendly Hugging Face model such as `Xenova/distilgpt2`.
+   - Adjust the greeting, tone, speaking style, target response length, guidance notes, and Hugging Face parameters.
    - Submit the form to persist the configuration in `data/personality.json`. The bot picks up the new settings immediately.
 
 ### Windows one-click launcher with RAM usage monitor
@@ -82,18 +81,16 @@ If you prefer a single command on Windows, double-click `scripts/startAll.bat`. 
 | `Node.js MSI cannot run on this Windows edition (error 5100). Attempting portable fallback...` | The MSI refused to run on the current Windows build (for example Windows Server Core). | The script automatically installs the portable bundle; if you need a system-wide install, download a compatible Node.js build manually. |
 | `Node.js MSI reported a fatal error (1603). Attempting portable fallback...` | The MSI setup failed because of a pending reboot or another installer conflict. | Resolve any installer prerequisites if you want to install Node globally, or rely on the portable bundle prepared by the launcher. |
 
-## Local conversation models
+## Local conversation model
 
-The mention-driven chat flow can operate in two modes, all configured from the Personality tab of the dashboard:
+The mention-driven chat flow always uses a Hugging Face transformer configured in the Personality tab. Suggested starter models:
 
-1. **Keyword rules only** – the default behavior that keeps responses light and deterministic.
-2. **Hugging Face** – loads a compact text-generation model locally through [`@xenova/transformers`](https://www.npmjs.com/package/@xenova/transformers). Suggested starters:
-   - `Xenova/distilgpt2` (fastest option for CPUs).
-   - `Xenova/TinyLlama-1.1B-Chat-v1.0` (still lightweight but more conversational).
+- `Xenova/distilgpt2` (fastest option for CPUs).
+- `Xenova/TinyLlama-1.1B-Chat-v1.0` (still lightweight but more conversational).
 
-  Use `npm run prepare:model` (included in the Windows launcher automatically) to download the selected model into the local cache so the generator runs offline on future boots.
+Use `npm run prepare:model` (included in the Windows launcher automatically) to download the selected model into the local cache so the generator runs offline on future boots.
 
-Both modes respect the keyword rules defined earlier in the form, and the bot continues a conversation automatically until the timeout expires or the user switches to another thread.
+Tune the tone, speaking style, response length, and guidance fields on the Personality page to steer how the model replies during every mention.
 
 ## Error reference
 
@@ -107,7 +104,6 @@ Every conversational failure surfaces as an ASCII-only message that ends with a 
 | `FilteredHuggingFaceOutputEmpty 2003` | The generated text only contained non-ASCII symbols, which are not allowed. | Lower the temperature or switch to a different Hugging Face model that produces plain ASCII text. |
 | `TransformersDependencyMissing 2004` | The `@xenova/transformers` package could not be resolved when switching to Hugging Face mode. | Run `npm install` inside the project folder so dependencies are available, or install the package manually with `npm install @xenova/transformers`. |
 | `TransformersPipelineUnavailable 2005` | The `@xenova/transformers` package loaded, but it did not expose the expected `pipeline` export. | Reinstall the dependency (`rm -rf node_modules package-lock.json && npm install`) to ensure the install is not corrupted, then restart the bot. |
-| `NoAcknowledgementPhrasesConfigured 3001` | Rule-based mode was selected but every acknowledgement phrase was removed. | Add at least one acknowledgement phrase in the Personality dashboard so the rules engine has content to send. |
 | `Chat processing error 9001` | The Discord bot caught one of the errors above when preparing a reply. | Check the bot logs for the root error code and apply the matching fix from this table. |
 
 ## Folder structure

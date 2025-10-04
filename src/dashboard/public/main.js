@@ -9,8 +9,6 @@ const messageForm = document.querySelector('#message-form');
 const feedback = document.querySelector('#message-feedback');
 const personalityForm = document.querySelector('#personality-form');
 const personalityFeedback = document.querySelector('#personality-feedback');
-const aiModeSelect = personalityForm?.querySelector('#ai-mode');
-const huggingfaceSettings = personalityForm?.querySelector('#huggingface-settings');
 
 if (menuToggle && menuPanel) {
   menuPanel.hidden = true;
@@ -42,19 +40,6 @@ if (menuToggle && menuPanel) {
       menuToggle.setAttribute('aria-expanded', 'false');
       menuPanel.hidden = true;
     });
-  });
-}
-
-function updateAIVisibility(mode) {
-  if (huggingfaceSettings) {
-    huggingfaceSettings.hidden = mode !== 'huggingface';
-  }
-}
-
-if (aiModeSelect) {
-  updateAIVisibility(aiModeSelect.value);
-  aiModeSelect.addEventListener('change', (event) => {
-    updateAIVisibility(event.target.value);
   });
 }
 
@@ -158,11 +143,9 @@ async function populatePersonalityForm() {
 
     const welcomeInput = personalityForm.querySelector('#welcome-message');
     const toneSelect = personalityForm.querySelector('#tone-select');
-    const keywordsInput = personalityForm.querySelector('#keywords');
     const styleSelect = personalityForm.querySelector('#conversation-style');
-    const shortReplyInput = personalityForm.querySelector('#short-reply');
-    const acknowledgementsInput = personalityForm.querySelector('#acknowledgements');
-    const keywordResponsesInput = personalityForm.querySelector('#keyword-responses');
+    const responseLengthInput = personalityForm.querySelector('#response-length');
+    const guidanceInput = personalityForm.querySelector('#guidance');
     const hfModelIdInput = personalityForm.querySelector('#hf-model-id');
     const hfMaxTokensInput = personalityForm.querySelector('#hf-max-tokens');
     const hfTemperatureInput = personalityForm.querySelector('#hf-temperature');
@@ -175,27 +158,14 @@ async function populatePersonalityForm() {
     if (toneSelect) {
       toneSelect.value = data.tone ?? 'friendly';
     }
-    if (keywordsInput) {
-      keywordsInput.value = Array.isArray(data.keywords) ? data.keywords.join(', ') : data.keywords ?? '';
-    }
     if (styleSelect) {
       styleSelect.value = data.conversation?.style ?? 'supportive';
     }
-    if (shortReplyInput) {
-      shortReplyInput.value = data.conversation?.shortReplyChance ?? 0.2;
+    if (responseLengthInput) {
+      responseLengthInput.value = data.conversation?.responseLength ?? 80;
     }
-    if (acknowledgementsInput) {
-      const phrases = data.conversation?.acknowledgementPhrases ?? [];
-      acknowledgementsInput.value = phrases.join('\n');
-    }
-    if (keywordResponsesInput) {
-      const keywordMap = data.conversation?.keywordResponses ?? {};
-      const lines = Object.entries(keywordMap).map(([key, value]) => `${key}: ${value}`);
-      keywordResponsesInput.value = lines.join('\n');
-    }
-    if (aiModeSelect) {
-      aiModeSelect.value = data.ai?.mode ?? 'rules';
-      updateAIVisibility(aiModeSelect.value);
+    if (guidanceInput) {
+      guidanceInput.value = data.conversation?.guidance ?? '';
     }
     if (hfModelIdInput) {
       hfModelIdInput.value = data.ai?.huggingface?.modelId ?? '';
@@ -226,11 +196,9 @@ personalityForm?.addEventListener('submit', async (event) => {
 
   const welcomeInput = personalityForm.querySelector('#welcome-message');
   const toneSelect = personalityForm.querySelector('#tone-select');
-  const keywordsInput = personalityForm.querySelector('#keywords');
   const styleSelect = personalityForm.querySelector('#conversation-style');
-  const shortReplyInput = personalityForm.querySelector('#short-reply');
-  const acknowledgementsInput = personalityForm.querySelector('#acknowledgements');
-  const keywordResponsesInput = personalityForm.querySelector('#keyword-responses');
+  const responseLengthInput = personalityForm.querySelector('#response-length');
+  const guidanceInput = personalityForm.querySelector('#guidance');
   const hfModelIdInput = personalityForm.querySelector('#hf-model-id');
   const hfMaxTokensInput = personalityForm.querySelector('#hf-max-tokens');
   const hfTemperatureInput = personalityForm.querySelector('#hf-temperature');
@@ -240,15 +208,12 @@ personalityForm?.addEventListener('submit', async (event) => {
   const payload = {
     welcomeMessage: welcomeInput?.value ?? '',
     tone: toneSelect?.value ?? 'friendly',
-    keywords: keywordsInput?.value ?? '',
     conversation: {
       style: styleSelect?.value ?? 'supportive',
-      shortReplyChance: Number(shortReplyInput?.value ?? 0.2),
-      acknowledgementPhrases: acknowledgementsInput?.value ?? '',
-      keywordResponses: keywordResponsesInput?.value ?? ''
+      responseLength: Number(responseLengthInput?.value ?? 80),
+      guidance: guidanceInput?.value ?? ''
     },
     ai: {
-      mode: aiModeSelect?.value ?? 'rules',
       huggingface: {
         modelId: hfModelIdInput?.value ?? '',
         maxNewTokens: Number(hfMaxTokensInput?.value ?? 60),
