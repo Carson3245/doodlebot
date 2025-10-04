@@ -2,6 +2,20 @@ import { generateWithHuggingFace } from './engines.js';
 
 const HISTORY_LIMIT = 6;
 
+const toneDescriptions = {
+  friendly: 'friendly and welcoming',
+  professional: 'professional and respectful',
+  playful: 'playful and upbeat',
+  serious: 'calm and thoughtful'
+};
+
+const styleDescriptions = {
+  supportive: 'supportive and encouraging',
+  informative: 'informative and clear',
+  playful: 'light and lively',
+  concise: 'concise and direct'
+};
+
 export async function createChatReply({
   message,
   personality,
@@ -53,43 +67,48 @@ function buildPrompt({
   const safeAuthor = authorName || 'the user';
   const safeGuild = guildName || 'this server';
 
-  const tone = personality.tone || 'friendly';
-  const style = personality.conversation?.style || 'supportive';
+  const toneKey = personality.tone || 'friendly';
+  const styleKey = personality.conversation?.style || 'supportive';
   const guidance = personality.conversation?.guidance || '';
   const responseLength = personality.conversation?.responseLength || 80;
   const welcomeMessage = personality.welcomeMessage || 'Welcome aboard!';
 
-  const intro = `You are ${safeBotName}, a lightweight Discord bot that supports members of ${safeGuild}.`;
-  const behaviour = `Respond to ${safeAuthor} in a ${tone} tone with a ${style} style. Stay within ${responseLength} words, keep ASCII-only text, and avoid emojis or markdown tables.`;
+  const toneDescription = toneDescriptions[toneKey] ?? toneDescriptions.friendly;
+  const styleDescription = styleDescriptions[styleKey] ?? styleDescriptions.supportive;
 
-  const reminders = [`Greeting template: ${welcomeMessage}`];
+  const instructions = [
+    `${safeBotName} is a ${toneDescription} assistant for the ${safeGuild} community on Discord.`,
+    `${safeBotName} speaks in a ${styleDescription} manner and keeps answers natural.`,
+    `Keep every reply under ${responseLength} words using ASCII characters only. Avoid emojis and markdown tables.`,
+    `Standard welcome message for new members: ${welcomeMessage}`
+  ];
+
   if (guidance) {
-    reminders.push(`Follow these operator notes: ${guidance}`);
+    instructions.push(`Operator note: ${guidance}`);
   }
-
-  const historyLines = [];
-  const trimmedHistory = history.slice(-HISTORY_LIMIT * 2);
-  for (const entry of trimmedHistory) {
-    if (!entry?.content) continue;
-    const speaker = entry.role === 'assistant' ? safeBotName : safeAuthor;
-    historyLines.push(`${speaker}: ${entry.content}`);
-  }
-
-  historyLines.push(`${safeAuthor}: ${latestMessage}`);
-  historyLines.push(`${safeBotName}:`);
-
-  const promptSections = [intro, behaviour, ...reminders];
 
   if (Array.isArray(channelContext) && channelContext.length > 0) {
-    promptSections.push('Recent channel conversation (oldest first):');
+    instructions.push('Recent channel discussion:');
     for (const line of channelContext) {
-      promptSections.push(line);
+      instructions.push(`- ${line}`);
     }
   }
 
-  promptSections.push('Conversation so far:');
-  promptSections.push(...historyLines);
-  return promptSections.filter(Boolean).join('\n');
+  const trimmedHistory = history.slice(-HISTORY_LIMIT * 2);
+  const conversationLines = [];
+  for (const entry of trimmedHistory) {
+    if (!entry?.content) continue;
+    const speaker = entry.role === 'assistant' ? safeBotName : safeAuthor;
+    conversationLines.push(`${speaker}: ${entry.content}`);
+  }
+
+  conversationLines.push(`${safeAuthor}: ${latestMessage}`);
+  conversationLines.push(`${safeBotName}:`);
+
+  instructions.push('Conversation:');
+  instructions.push(...conversationLines);
+
+  return instructions.filter(Boolean).join('\n');
 }
 
 function cleanOutput(output) {

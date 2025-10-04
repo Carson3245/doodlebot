@@ -124,6 +124,9 @@ async function bootstrap() {
       }
     }
 
+    const authorDisplayName = resolveDisplayName(message.author, message.member);
+    const botDisplayName = resolveDisplayName(botUser, message.guild?.members?.me);
+
     const textForResponse = sanitizeMessage(content, botUser.id);
     const personality = personalityStore.get();
     const history = session?.history ? [...session.history] : [];
@@ -131,7 +134,8 @@ async function bootstrap() {
     const channelContext = await collectChannelContext({
       message,
       botId: botUser.id,
-      activeUserId: message.author.id
+      activeUserId: message.author.id,
+      activeUserName: authorDisplayName
     });
 
     let replyText;
@@ -140,8 +144,8 @@ async function bootstrap() {
         message: textForResponse,
         personality,
         history,
-        authorName: message.author.username,
-        botName: botUser.username,
+        authorName: authorDisplayName,
+        botName: botDisplayName,
         guildName: message.guild?.name,
         channelContext
       });
@@ -229,7 +233,7 @@ function sanitizeMessage(content, botId) {
   return content.replace(mentionPattern, '').trim();
 }
 
-async function collectChannelContext({ message, botId, activeUserId }) {
+async function collectChannelContext({ message, botId, activeUserId, activeUserName }) {
   try {
     if (!message.channel?.messages?.fetch) {
       return [];
@@ -253,7 +257,9 @@ async function collectChannelContext({ message, botId, activeUserId }) {
 
       const truncated = sanitized.length > 240 ? `${sanitized.slice(0, 237)}...` : sanitized;
 
-      const speaker = entry.author.id === activeUserId ? 'You' : entry.author.username;
+      const speaker = entry.author.id === activeUserId
+        ? activeUserName || resolveDisplayName(entry.author, entry.member)
+        : resolveDisplayName(entry.author, entry.member);
       contextLines.push(`${speaker}: ${truncated}`);
       if (contextLines.length > 8) {
         contextLines.shift();
@@ -277,6 +283,30 @@ function trimHistory(history) {
   }
 
   return history.slice(-MAX_HISTORY_LENGTH);
+}
+
+function resolveDisplayName(user, member) {
+  if (!user) {
+    return 'Member';
+  }
+
+  if (member?.nickname) {
+    return member.nickname;
+  }
+
+  if (member?.displayName) {
+    return member.displayName;
+  }
+
+  if (user.globalName) {
+    return user.globalName;
+  }
+
+  if (user.username) {
+    return user.username;
+  }
+
+  return user.tag ?? 'Member';
 }
 
 bootstrap().catch((error) => {
