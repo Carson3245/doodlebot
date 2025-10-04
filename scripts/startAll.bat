@@ -28,6 +28,10 @@ set "NODE_PORTABLE_FOLDER=node-%NODE_VERSION%-%NODE_PORTABLE_PLATFORM%"
 
 echo Detected Windows architecture: %NODE_CPU_ARCH%
 
+echo.
+echo Checking for repository updates...
+call :update_repository
+
 REM ---------------------------------------------------------------------------
 REM Ensure npm (and therefore Node.js) is available
 REM ---------------------------------------------------------------------------
@@ -179,6 +183,54 @@ if not exist "!NODE_PORTABLE_BIN!\node.exe" (
 )
 
 set "PATH=!NODE_PORTABLE_BIN!;!NODE_PORTABLE_NPM!;!PATH!"
+exit /b 0
+
+:update_repository
+set "GIT_DIRTY="
+set "CURRENT_BRANCH="
+where git >nul 2>&1
+if errorlevel 1 (
+  echo Git command not found. Skipping automatic repository update.
+  exit /b 0
+)
+
+git rev-parse --is-inside-work-tree >nul 2>&1
+if errorlevel 1 (
+  echo Current directory is not a Git repository. Skipping automatic update.
+  exit /b 0
+)
+
+for /f "delims=" %%B in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "CURRENT_BRANCH=%%B"
+if not defined CURRENT_BRANCH (
+  echo Unable to detect current branch. Skipping automatic update.
+  exit /b 0
+)
+
+for /f "delims=" %%S in ('git status --porcelain 2^>nul') do set "GIT_DIRTY=1"
+if defined GIT_DIRTY (
+  echo Working tree has local changes. Skipping automatic update to avoid overwriting your edits.
+  exit /b 0
+)
+
+git remote get-url origin >nul 2>&1
+if errorlevel 1 (
+  echo Remote "origin" is not configured. Skipping automatic update.
+  exit /b 0
+)
+
+git fetch origin >nul 2>&1
+if errorlevel 1 (
+  echo Failed to fetch updates from origin. Continuing with local files.
+  exit /b 0
+)
+
+git pull --ff-only
+if errorlevel 1 (
+  echo Unable to fast-forward the current branch automatically. Please update the repository manually.
+) else (
+  echo Repository is up to date.
+)
+
 exit /b 0
 
 :add_node_msi_path

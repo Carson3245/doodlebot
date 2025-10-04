@@ -67,6 +67,7 @@ Fully featured Discord bot template focused on moderation, quick conversation, a
 If you prefer a single command on Windows, double-click `scripts/startAll.bat`. The batch file:
 
 - Installs Node.js LTS automatically if `npm` is not available yet (choosing the correct 32-bit, 64-bit, or ARM build and falling back to a portable bundle if the MSI installer fails).
+- Fetches the latest commits from `origin` (when Git is available and the working tree has no local changes) so you start from the newest template revision.
 - Installs the project dependencies (if `node_modules` is missing).
 - Downloads the configured Hugging Face model so the text generator can run offline.
 - Opens a PowerShell window that refreshes the current RAM usage every second.
