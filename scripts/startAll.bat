@@ -86,7 +86,20 @@ if errorlevel 1 (
 REM ---------------------------------------------------------------------------
 REM Install project dependencies
 REM ---------------------------------------------------------------------------
+set "DEPENDENCY_TARGET=node_modules\@xenova\transformers\package.json"
 if not exist node_modules (
+  set "DEPENDENCIES_READY=0"
+) else (
+  if exist "%DEPENDENCY_TARGET%" (
+    set "DEPENDENCIES_READY=1"
+  ) else (
+    set "DEPENDENCIES_READY=0"
+  )
+)
+
+if "%DEPENDENCIES_READY%"=="1" (
+  echo Dependencies are already installed.
+) else (
   echo Installing project dependencies...
   call npm install
   if errorlevel 1 (
@@ -94,8 +107,6 @@ if not exist node_modules (
     echo Failed to install dependencies. Please check the error above.
     exit /b 1
   )
-) else (
-  echo Dependencies are already installed.
 )
 
 echo.
