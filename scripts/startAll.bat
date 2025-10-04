@@ -51,15 +51,19 @@ if errorlevel 1 (
     set "NODE_READY_MESSAGE=Node.js and npm are now installed."
   ) else (
     echo.
+    set "INSTALL_ERROR_MSG=Node.js installer exited with code !INSTALL_EXIT!. Attempting portable fallback..."
     if "!INSTALL_EXIT!"=="1633" (
-      echo Node.js MSI build is incompatible with this Windows architecture or version. Attempting portable fallback...
-    ) else if "!INSTALL_EXIT!"=="5100" (
-      echo Node.js MSI cannot run on this Windows edition (error 5100). Attempting portable fallback...
-    ) else if "!INSTALL_EXIT!"=="1603" (
-      echo Node.js MSI reported a fatal error (1603). Attempting portable fallback...
+      set "INSTALL_ERROR_MSG=Node.js MSI build is incompatible with this Windows architecture or version. Attempting portable fallback..."
     ) else (
-      echo Node.js installer exited with code !INSTALL_EXIT!. Attempting portable fallback...
+      if "!INSTALL_EXIT!"=="5100" (
+        set "INSTALL_ERROR_MSG=Node.js MSI cannot run on this Windows edition (error 5100). Attempting portable fallback..."
+      ) else (
+        if "!INSTALL_EXIT!"=="1603" (
+          set "INSTALL_ERROR_MSG=Node.js MSI reported a fatal error (1603). Attempting portable fallback..."
+        )
+      )
     )
+    echo !INSTALL_ERROR_MSG!
     call :install_portable_node
     if errorlevel 1 (
       echo Portable Node.js setup failed. Please install Node.js manually and retry.
