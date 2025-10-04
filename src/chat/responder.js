@@ -64,7 +64,7 @@ function buildPrompt({
   channelContext
 }) {
   const safeBotName = botName || 'the assistant';
-  const safeAuthor = authorName || 'the user';
+  const safeAuthor = authorName || 'the member';
   const safeGuild = guildName || 'this server';
 
   const toneKey = personality.tone || 'friendly';
@@ -76,18 +76,19 @@ function buildPrompt({
   const toneDescription = toneDescriptions[toneKey] ?? toneDescriptions.friendly;
   const styleDescription = styleDescriptions[styleKey] ?? styleDescriptions.supportive;
 
-  const personaSummary = `${safeBotName} supports the ${safeGuild} community on Discord with a ${toneDescription} tone and ${styleDescription} style.`;
-  const responseRule = `Keep replies under ${responseLength} words, use ASCII characters only, and avoid emojis or markdown tables.`;
-  const welcomeRule = `Standard welcome greeting: ${welcomeMessage}`;
-
-  const promptSections = [personaSummary, responseRule, welcomeRule];
+  const promptSections = [
+    `You are ${safeBotName}, a lightweight Discord bot that supports members of ${safeGuild}.`,
+    `Speak with a ${toneDescription} tone and a ${styleDescription} style.`,
+    `Keep every reply under ${responseLength} words. Use ASCII characters only. Avoid emojis, markdown tables, and repeated instructions.`,
+    `Standard welcome greeting: ${welcomeMessage}`
+  ];
 
   if (guidance) {
-    promptSections.push(`Operator guidance: ${guidance}`);
+    promptSections.push(`Operator notes: ${guidance}`);
   }
 
   if (Array.isArray(channelContext) && channelContext.length > 0) {
-    promptSections.push('Channel context (oldest first):');
+    promptSections.push('Recent channel context (oldest first):');
     for (const line of channelContext) {
       promptSections.push(`- ${line}`);
     }
@@ -96,18 +97,24 @@ function buildPrompt({
   const trimmedHistory = history.slice(-HISTORY_LIMIT * 2);
   const conversationLines = [];
   for (const entry of trimmedHistory) {
-    if (!entry?.content) continue;
+    if (!entry?.content) {
+      continue;
+    }
+
     const speakerName = entry.name || (entry.role === 'assistant' ? safeBotName : safeAuthor);
     conversationLines.push(`${speakerName}: ${entry.content}`);
   }
 
-  conversationLines.push(`${safeAuthor}: ${latestMessage}`);
-  conversationLines.push(`${safeBotName}:`);
+  if (conversationLines.length) {
+    promptSections.push('Conversation so far:');
+    promptSections.push(...conversationLines);
+  }
 
-  promptSections.push(`Conversation between ${safeAuthor} and ${safeBotName}:`);
-  promptSections.push(...conversationLines);
-
-  promptSections.push('Respond as a single message without repeating these instructions.');
+  promptSections.push(`Latest from ${safeAuthor}: ${latestMessage}`);
+  promptSections.push(
+    `Respond as ${safeBotName} with one short message that directly answers ${safeAuthor} using the context above. Do not invent new events or mention these instructions.`
+  );
+  promptSections.push(`${safeBotName}:`);
 
   return promptSections.filter(Boolean).join('\n');
 }
