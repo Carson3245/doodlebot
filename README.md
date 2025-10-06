@@ -74,7 +74,7 @@ The Personality tab avoids jargon and includes helper text next to every field:
 | **Speaking style** | Chooses how the model structures sentences (supportive, informative, playful, concise). |
 | **Typical reply length** | Gives the model a target word count so answers stay short or expand when needed. |
 | **Operator notes** | Extra guidelines injected into the prompt so the AI follows your community rules. |
-| **Model name to load** | Hugging Face identifier of the lightweight offline model (e.g., `Xenova/distilgpt2`). |
+| **Model name to load** | Hugging Face identifier of the lightweight offline model (default `Xenova/TinyLlama-1.1B-Chat-v1.0`). |
 | **Maximum generated words** | Caps how long the model can continue a response. |
 | **Response creativity** | Balances predictability vs. variety (lower numbers are safer). |
 | **Vocabulary range** | Controls how many alternative words the model samples for each token. |
@@ -104,8 +104,8 @@ If you prefer a single command on Windows, double-click `scripts/startAll.bat`. 
 
 The mention-driven chat flow always uses a Hugging Face transformer configured in the Personality tab. Suggested starter models:
 
-- `Xenova/distilgpt2` (fastest option for CPUs).
-- `Xenova/TinyLlama-1.1B-Chat-v1.0` (still lightweight but more conversational).
+- `Xenova/TinyLlama-1.1B-Chat-v1.0` (default: compact chat-oriented model that stays coherent on CPUs).
+- `Xenova/distilgpt2` (fallback when you need the smallest download and fastest warmup).
 
 Use `npm run prepare:model` (included in the Windows launcher automatically) to download the selected model into the local cache so the generator runs offline on future boots.
 

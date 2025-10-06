@@ -14,7 +14,7 @@ const defaultPersonality = {
   },
   ai: {
     huggingface: {
-      modelId: 'Xenova/distilgpt2',
+      modelId: 'Xenova/TinyLlama-1.1B-Chat-v1.0',
       maxNewTokens: 60,
       temperature: 0.7,
       topP: 0.9,

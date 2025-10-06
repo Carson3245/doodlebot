@@ -26,7 +26,7 @@ function loadPipeline() {
 
 function getHuggingFaceDefaults(config = {}) {
   return {
-    modelId: config.modelId || 'Xenova/distilgpt2',
+    modelId: config.modelId || 'Xenova/TinyLlama-1.1B-Chat-v1.0',
     maxNewTokens: Math.max(16, Number(config.maxNewTokens) || 60),
     temperature: Number.isFinite(Number(config.temperature)) ? Number(config.temperature) : 0.7,
     topP: Number.isFinite(Number(config.topP)) ? Number(config.topP) : 0.9,
