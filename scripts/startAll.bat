@@ -93,13 +93,39 @@ REM ---------------------------------------------------------------------------
 if exist node_modules (
   echo Dependencies are already installed.
 ) else (
-echo Installing project dependencies...
-call npm install
+  echo Installing project dependencies...
+  call npm install
+  if errorlevel 1 (
+    echo.
+    echo Failed to install dependencies. Please check the error above.
+    exit /b 1
+  )
+)
+
+REM ---------------------------------------------------------------------------
+REM Install dashboard client dependencies
+REM ---------------------------------------------------------------------------
+if exist src\dashboard\client\node_modules (
+  echo Dashboard client dependencies are already installed.
+) else (
+  echo Installing dashboard client dependencies...
+  call npm --prefix src\dashboard\client install
+  if errorlevel 1 (
+    echo.
+    echo Failed to install dashboard client dependencies. Please check the error above.
+    exit /b 1
+  )
+)
+
+REM ---------------------------------------------------------------------------
+REM Build the React dashboard bundle
+REM ---------------------------------------------------------------------------
+echo Building React dashboard bundle...
+call npm run dashboard:build
 if errorlevel 1 (
   echo.
-  echo Failed to install dependencies. Please check the error above.
+  echo Dashboard build failed. Please check the error above.
   exit /b 1
-)
 )
 
 echo.
