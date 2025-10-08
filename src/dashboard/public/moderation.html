@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DoodleBot Moderation</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="app-body">
+    <div class="app-shell">
+      <aside class="sidebar" data-navigation>
+        <div class="sidebar__brand">
+          <img src="assets/logo.png" alt="Planet Doodley logo" class="sidebar__logo" />
+          <div>
+            <p class="sidebar__title">Planet Doodle</p>
+            <p class="sidebar__subtitle">Control Center</p>
+          </div>
+        </div>
+
+        <nav class="sidebar__nav" aria-label="Primary">
+          <div class="sidebar__group">
+            <p class="sidebar__label">Overview</p>
+            <a class="sidebar__link" href="/">Dashboard</a>
+          </div>
+          <div class="sidebar__group">
+            <p class="sidebar__label">Config</p>
+            <a class="sidebar__link" href="/settings.html">Persona &amp; Voice</a>
+            <a class="sidebar__link" href="/commands.html">Commands</a>
+            <a class="sidebar__link" href="/moderation.html" aria-current="page">Moderation</a>
+          </div>
+          <div class="sidebar__group">
+            <p class="sidebar__label">Insights</p>
+            <a class="sidebar__link" href="/logs.html">Logs</a>
+          </div>
+        </nav>
+
+        <div class="sidebar__footer">
+          <p class="sidebar__version">v0.1 - Doodley</p>
+          <button class="sidebar__collapse" type="button" data-nav-toggle aria-label="Toggle navigation">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </aside>
+
+      <div class="main-area">
+        <header class="topbar">
+          <div class="topbar__left">
+            <button class="topbar__hamburger" type="button" data-nav-toggle aria-label="Toggle navigation">
+              <span></span><span></span><span></span>
+            </button>
+            <div>
+              <h1 class="topbar__title">Moderation center</h1>
+              <p class="topbar__subtitle">Centralize bans, timeouts, warnings, and automations in one place.</p>
+            </div>
+          </div>
+          <div class="topbar__right">
+            <div class="topbar__auth">
+              <div class="topbar__profile" data-auth-signed-in hidden>
+                <span class="topbar__avatar" data-auth-avatar>--</span>
+                <span class="topbar__name" data-auth-username>Loading...</span>
+                <button type="button" class="button button--ghost" data-auth-logout>Logout</button>
+              </div>
+              <a class="button button--primary" href="/auth/login" data-auth-signed-out data-auth-login>Login with Discord</a>
+            </div>
+          </div>
+        </header>
+
+        <main class="content">
+          <section class="stat-grid" data-moderation-summary>
+            <article class="stat-card">
+              <p class="stat-card__label">Active bans</p>
+              <p class="stat-card__value" id="moderation-bans">0</p>
+              <span class="stat-card__helper">Members currently banned</span>
+            </article>
+            <article class="stat-card">
+              <p class="stat-card__label">Active timeouts</p>
+              <p class="stat-card__value" id="moderation-timeouts">0</p>
+              <span class="stat-card__helper">Members muted right now</span>
+            </article>
+            <article class="stat-card">
+              <p class="stat-card__label">Logged warnings</p>
+              <p class="stat-card__value" id="moderation-warnings">0</p>
+              <span class="stat-card__helper">Total warnings on record</span>
+            </article>
+            <article class="stat-card">
+              <p class="stat-card__label">Open cases</p>
+              <p class="stat-card__value" id="moderation-open-cases">0</p>
+              <span class="stat-card__helper">Investigations still in progress</span>
+            </article>
+          </section>
+
+          <section class="panel">
+            <header class="panel__header">
+              <div>
+                <h2>Ações rápidas</h2>
+                <p>Dispare ações comuns sem memorizar cada comando slash.</p>
+              </div>
+            </header>
+            <div class="panel__body quick-actions" data-auth-signed-in hidden>
+              <p class="helper">Your session will be used to trigger actions. Adjust the drafts as needed.</p>
+              <div class="quick-actions__grid">
+                <form class="form quick-action" data-action="ban">
+                  <h3>Ban</h3>
+                  <div class="form-row">
+                    <label for="ban-user">User / ID</label>
+                    <input id="ban-user" name="user" placeholder="@user or 123" required />
+                  </div>
+                  <div class="form-row">
+                    <label for="ban-reason">Reason</label>
+                    <input id="ban-reason" name="reason" placeholder="Rule violation..." />
+                  </div>
+                  <button type="submit" class="button button--primary" disabled>Submit ban</button>
+                  <p class="form-helper">API integration coming soon.</p>
+                </form>
+
+                <form class="form quick-action" data-action="timeout">
+                  <h3>Timeout</h3>
+                  <div class="form-row">
+                    <label for="timeout-user">User / ID</label>
+                    <input id="timeout-user" name="user" placeholder="@user or 123" required />
+                  </div>
+                  <div class="form-grid">
+                    <div class="form-row">
+                      <label for="timeout-duration">Duration (min)</label>
+                      <input id="timeout-duration" name="duration" type="number" min="1" max="10080" step="5" placeholder="60" />
+                    </div>
+                    <div class="form-row">
+                      <label for="timeout-reason">Reason</label>
+                      <input id="timeout-reason" name="reason" placeholder="Flood, spam..." />
+                    </div>
+                  </div>
+                  <button type="submit" class="button button--primary" disabled>Apply timeout</button>
+                  <p class="form-helper">Wire up the endpoint to enable this action.</p>
+                </form>
+
+                <form class="form quick-action" data-action="warn">
+                  <h3>Warning</h3>
+                  <div class="form-row">
+                    <label for="warn-user">User / ID</label>
+                    <input id="warn-user" name="user" placeholder="@user or 123" required />
+                  </div>
+                  <div class="form-row">
+                    <label for="warn-reason">Reason</label>
+                    <textarea id="warn-reason" name="reason" rows="3" placeholder="Describe the violation..."></textarea>
+                  </div>
+                  <button type="submit" class="button button--primary" disabled>Log warning</button>
+                  <p class="form-helper">Persistence layer coming soon.</p>
+                </form>
+              </div>
+            </div>
+            <div class="panel__body" data-auth-signed-out>
+              <p class="helper">Log in with your moderator account to unlock quick actions.</p>
+            </div>
+          </section>
+
+          <section class="panel">
+            <header class="panel__header">
+              <div>
+                <h2>Recent moderation actions</h2>
+                <p>Summary of the latest disciplinary logs captured by the bot.</p>
+              </div>
+            </header>
+            <div class="panel__body">
+              <table class="table" data-moderation-table>
+                <thead>
+                  <tr>
+                    <th>Action</th>
+                    <th>User</th>
+                    <th>Moderator</th>
+                    <th>Reason</th>
+                    <th>When</th>
+                  </tr>
+                </thead>
+                <tbody id="moderation-log">
+                  <tr class="placeholder-row">
+                    <td colspan="5">No entries loaded yet. Wire this table to your moderation database or API.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <header class="panel__header">
+              <div>
+                <h2>Automoderation</h2>
+                <p>Quick configuration for content filters and spam thresholds.</p>
+              </div>
+            </header>
+            <div class="panel__body automod-grid">
+              <div class="automod-card">
+                <header>
+                  <h3>Content filters</h3>
+                  <p class="helper">Block unwanted links, invites, and restricted terms.</p>
+                </header>
+                <ul class="simple-list">
+                  <li><strong>Unwanted links</strong><span class="list-subtext">Enable to remove invites and suspicious URLs</span></li>
+                  <li><strong>Keyword list</strong><span class="list-subtext">Hook into your banned words list</span></li>
+                </ul>
+              </div>
+              <div class="automod-card">
+                <header>
+                  <h3>Spam thresholds</h3>
+                  <p class="helper">Set limits before the bot applies automatic timeouts.</p>
+                </header>
+                <ul class="simple-list">
+                  <li><strong>Messages per minute</strong><span class="list-meta">Suggestion: 8</span></li>
+                  <li><strong>Auto-timeout duration</strong><span class="list-meta">Suggestion: 10 minutes</span></li>
+                </ul>
+              </div>
+              <div class="automod-card">
+                <header>
+                  <h3>Alerts &amp; logs</h3>
+                  <p class="helper">Keep staff informed about automated actions.</p>
+                </header>
+                <ul class="simple-list">
+                  <li><strong>Log channel</strong><span class="list-subtext">Configure via `.env` or future dashboard settings</span></li>
+                  <li><strong>Staff alert</strong><span class="list-subtext">Decide which @Staff role gets pinged</span></li>
+                </ul>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div class="auth-overlay" data-auth-overlay hidden>
+      <div class="auth-overlay__panel">
+        <img src="assets/logo.svg" alt="Planet Doodley logo" class="auth-overlay__logo" />
+        <h2>Log in to manage Doodley</h2>
+        <p class="auth-overlay__helper">Use your Discord account to access the control panel.</p>
+        <p class="auth-overlay__error" data-auth-error hidden></p>
+        <a class="button button--primary" href="/auth/login" data-auth-login data-auth-signed-out>Sign in with Discord</a>
+      </div>
+    </div>
+
+    <script src="main.js" type="module"></script>
+  </body>
+</html>

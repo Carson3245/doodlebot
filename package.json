@@ -1,0 +1,35 @@
+{
+  "name": "doodlebot",
+  "version": "0.1.0",
+  "description": "Discord bot template with moderation and web dashboard",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "start:all": "node scripts/startAll.js",
+    "dashboard:dev": "npm run dev --prefix src/dashboard/client",
+    "dashboard:build": "npm run build --prefix src/dashboard/client",
+    "dashboard:preview": "npm run preview --prefix src/dashboard/client"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "moderation",
+    "dashboard"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "discord.js": "^14.13.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-session": "^1.18.2",
+    "morgan": "^1.10.0",
+    "open": "^10.2.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}

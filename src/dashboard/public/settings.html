@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Doodley Settings</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="app-body">
+    <div class="app-shell">
+      <aside class="sidebar" data-navigation>
+        <div class="sidebar__brand">
+          <img src="assets/logo.png" alt="Planet Doodley logo" class="sidebar__logo" />
+          <div>
+            <p class="sidebar__title">Planet Doodle</p>
+            <p class="sidebar__subtitle">Control Center</p>
+          </div>
+        </div>
+
+        <nav class="sidebar__nav" aria-label="Primary">
+          <div class="sidebar__group">
+            <p class="sidebar__label">Overview</p>
+            <a class="sidebar__link" href="/">Dashboard</a>
+          </div>
+          <div class="sidebar__group">
+            <p class="sidebar__label">Config</p>
+            <a class="sidebar__link" href="/settings.html" aria-current="page">Persona &amp; Voice</a>
+            <a class="sidebar__link" href="/commands.html">Commands</a>
+            <a class="sidebar__link" href="/moderation.html">Moderation</a>
+          </div>
+          <div class="sidebar__group">
+            <p class="sidebar__label">Insights</p>
+            <a class="sidebar__link" href="/logs.html">Logs</a>
+          </div>
+        </nav>
+
+        <div class="sidebar__footer">
+          <p class="sidebar__version">v0.1 - Doodley</p>
+          <button class="sidebar__collapse" type="button" data-nav-toggle aria-label="Toggle navigation">
+            <span></span><span></span><span></span>
+          </button>
+        </div>
+      </aside>
+
+      <div class="main-area">
+        <header class="topbar">
+          <div class="topbar__left">
+            <button class="topbar__hamburger" type="button" data-nav-toggle aria-label="Toggle navigation">
+              <span></span><span></span><span></span>
+            </button>
+            <div>
+              <h1 class="topbar__title">Persona settings</h1>
+              <p class="topbar__subtitle">Fine-tune how Doodley introduces, speaks, and signs off.</p>
+            </div>
+          </div>
+          <div class="topbar__right">
+            <div class="topbar__auth">
+              <div class="topbar__profile" data-auth-signed-in hidden>
+                <span class="topbar__avatar" data-auth-avatar>--</span>
+                <span class="topbar__name" data-auth-username>Loading...</span>
+                <button type="button" class="button button--ghost" data-auth-logout>Logout</button>
+              </div>
+              <a class="button button--primary" href="/auth/login" data-auth-signed-out data-auth-login>Login with Discord</a>
+            </div>
+          </div>
+        </header>
+
+        <main class="content">
+          <section class="page-intro">
+            <h2>Style presets stay in sync with the in-discord <code>/tune</code> command.</h2>
+            <p>
+              All changes persist to <code>data/style.json</code>. Apply a preset from Discord or tweak values here - both
+              interfaces share the same store.
+            </p>
+          </section>
+
+          <div class="settings-container">
+            <nav class="settings-nav" aria-label="Settings categories">
+              <button class="settings-nav__item" data-section="identity" aria-selected="true">Identity &amp; Voice</button>
+              <button class="settings-nav__item" data-section="messaging">Messaging Style</button>
+              <button class="settings-nav__item" data-section="brain">Brain Insights</button>
+            </nav>
+
+            <section class="settings-content">
+              <article class="settings-section" id="section-identity" data-section="identity">
+                <header class="settings-section__header">
+                  <h2>Identity &amp; Voice</h2>
+                  <p>Keep Doodley grounded in their story while adjusting tone and cadence.</p>
+                </header>
+
+                <form id="identity-form" class="panel form-panel">
+                  <div class="form-row">
+                    <label for="style-name">Bot name</label>
+                    <input id="style-name" name="name" type="text" value="Doodley" readonly />
+                    <p class="form-helper">Doodley never forgets their own name.</p>
+                  </div>
+
+                  <div class="form-row">
+                    <label for="style-pronouns">Pronouns</label>
+                    <input id="style-pronouns" name="pronouns" type="text" placeholder="they/them" />
+                  </div>
+
+                  <div class="form-row">
+                    <label for="style-bio">Persona bio</label>
+                    <textarea id="style-bio" name="bio" rows="4" placeholder="Describe Doodley's story and mission."></textarea>
+                  </div>
+
+                  <div class="form-grid">
+                    <div class="form-row">
+                      <label for="style-tone">Voice tone</label>
+                      <input id="style-tone" name="tone" type="text" placeholder="warm and whimsical" />
+                    </div>
+
+                    <div class="form-row">
+                      <label for="style-pace">Pacing</label>
+                      <input id="style-pace" name="pace" type="text" placeholder="steady" />
+                    </div>
+                  </div>
+
+                  <div class="form-row">
+                    <label for="style-phrases">Signature phrases</label>
+                    <input
+                      id="style-phrases"
+                      name="signaturePhrases"
+                      type="text"
+                      placeholder="sparkly greetings, stardust vibes"
+                    />
+                    <p class="form-helper">Comma-separated values. Up to ten phrases are stored.</p>
+                  </div>
+
+                  <div class="form-row">
+                    <label for="style-emoji">Emoji flavor</label>
+                    <input id="style-emoji" name="emojiFlavor" type="text" placeholder="twinkles" />
+                  </div>
+
+                  <div class="form-actions">
+                    <button type="submit" class="button button--primary">Save identity</button>
+                    <p id="identity-feedback" class="form-feedback" role="status"></p>
+                  </div>
+                </form>
+              </article>
+
+              <article class="settings-section hidden" id="section-messaging" data-section="messaging">
+                <header class="settings-section__header">
+                  <h2>Messaging style</h2>
+                  <p>Choose how friendly, concise, or high-energy Doodley should be in replies.</p>
+                </header>
+
+                <form id="messaging-form" class="panel form-panel">
+                  <div class="form-row checkbox-row">
+                    <input id="style-nickname" name="usesNickname" type="checkbox" />
+                    <label for="style-nickname">Include the member's name or nickname in replies</label>
+                  </div>
+
+                  <div class="form-row checkbox-row">
+                    <input id="style-signoff" name="addsSignOff" type="checkbox" />
+                    <label for="style-signoff">Add a sign-off to each reply</label>
+                  </div>
+
+                  <div class="form-row">
+                    <label for="style-signoff-text">Sign-off text</label>
+                    <input id="style-signoff-text" name="signOffText" type="text" placeholder="Doodley out!" />
+                  </div>
+
+                  <div class="form-grid">
+                    <div class="form-row">
+                      <label for="style-temperature">Creativity (temperature)</label>
+                      <input
+                        id="style-temperature"
+                        name="temperature"
+                        type="number"
+                        step="0.05"
+                        min="0.1"
+                        max="1.2"
+                        placeholder="0.65"
+                      />
+                      <p class="form-helper">Lower numbers keep responses grounded.</p>
+                    </div>
+
+                    <div class="form-row">
+                      <label for="style-topp">Vocabulary breadth (top-p)</label>
+                      <input
+                        id="style-topp"
+                        name="topP"
+                        type="number"
+                        step="0.05"
+                        min="0.1"
+                        max="1"
+                        placeholder="0.85"
+                      />
+                      <p class="form-helper">Reduce to limit rare words and focus the voice.</p>
+                    </div>
+                  </div>
+
+                  <div class="form-actions">
+                    <button type="submit" class="button button--primary">Save messaging style</button>
+                    <p id="messaging-feedback" class="form-feedback" role="status"></p>
+                  </div>
+                </form>
+              </article>
+
+              <article class="settings-section hidden" id="section-brain" data-section="brain">
+                <header class="settings-section__header">
+                  <h2>Doodley Brain</h2>
+                  <p>Inspect how the bot perceives member activity. Data is local and never leaves your machine.</p>
+                </header>
+
+                <div class="panel form-panel">
+                  <dl class="quick-stats" id="brain-stats">
+                    <div>
+                      <dt>Tracked members</dt>
+                      <dd id="brain-users">0</dd>
+                    </div>
+                    <div>
+                      <dt>Avg message length</dt>
+                      <dd id="brain-average">0</dd>
+                    </div>
+                    <div>
+                      <dt>Last update</dt>
+                      <dd id="brain-updated">--</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <div class="panel list-panel">
+                  <h3>Top conversationalists</h3>
+                  <ul id="brain-top-talkers" class="simple-list"></ul>
+                </div>
+
+                <div class="panel list-panel">
+                  <h3>Recent visitors</h3>
+                  <ul id="brain-recent" class="simple-list"></ul>
+                </div>
+              </article>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <div class="auth-overlay" data-auth-overlay hidden>
+      <div class="auth-overlay__panel">
+        <img src="assets/logo.svg" alt="Planet Doodley logo" class="auth-overlay__logo" />
+        <h2>Log in to manage Doodley</h2>
+        <p class="auth-overlay__helper">Use your Discord account to access the control panel.</p>
+        <p class="auth-overlay__error" data-auth-error hidden></p>
+        <a class="button button--primary" href="/auth/login" data-auth-login data-auth-signed-out>Sign in with Discord</a>
+      </div>
+    </div>
+
+    <script src="main.js" type="module"></script>
+  </body>
+</html>
