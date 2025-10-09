@@ -70,6 +70,18 @@ a {
   z-index: 0;
 }
 
+.app-body.auth-page-active::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(5, 9, 18, 0.78), rgba(5, 9, 18, 0.92)),
+    url('assets/stars.png') center/640px repeat;
+  backdrop-filter: blur(18px);
+  pointer-events: none;
+  z-index: 0;
+}
+
 .app-shell {
   display: flex;
   min-height: 100vh;

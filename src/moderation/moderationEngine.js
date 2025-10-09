@@ -378,7 +378,7 @@ export class ModerationEngine {
       throw error
     }
 
-    const { entry, totals } = await recordCase({
+    const { entry, action, totals } = await recordCase({
       guildId: guild.id,
       guildName: guild.name ?? null,
       userId,
@@ -392,7 +392,7 @@ export class ModerationEngine {
       metadata: metadata ?? null
     })
 
-    await this.notifyLog(guild, entry)
+    await this.notifyLog(guild, entry, action)
 
     await this.evaluateEscalation(guild, member, entry, totals)
   }
@@ -423,6 +423,13 @@ export class ModerationEngine {
             source: 'auto-escalation',
             metadata: { escalatedFrom: 'warn' }
           })
+          await updateCaseStatus({
+            guildId: guild.id,
+            caseId: entry.id,
+            status: 'escalated',
+            actorType: 'system',
+            note: `Escalated after ${totals.warnings} warnings.`
+          }).catch(() => {})
         } catch (error) {
           console.error('Failed to escalate warning to timeout:', error)
         }
@@ -441,6 +448,13 @@ export class ModerationEngine {
             source: 'auto-escalation',
             metadata: { escalatedFrom: 'warn-threshold' }
           })
+          await updateCaseStatus({
+            guildId: guild.id,
+            caseId: entry.id,
+            status: 'escalated',
+            actorType: 'system',
+            note: `Escalated after crossing warning threshold (${totals.warnings}).`
+          }).catch(() => {})
         } catch (error) {
           console.error('Failed to escalate warning threshold to timeout:', error)
         }
@@ -461,6 +475,13 @@ export class ModerationEngine {
             source: 'auto-escalation',
             metadata: { escalatedFrom: 'timeout' }
           })
+          await updateCaseStatus({
+            guildId: guild.id,
+            caseId: entry.id,
+            status: 'escalated',
+            actorType: 'system',
+            note: 'Escalated to ban due to repeated offences.'
+          }).catch(() => {})
         } catch (error) {
           console.error('Failed to escalate timeout to ban:', error)
         }
@@ -520,6 +541,7 @@ export class ModerationEngine {
       status: 'open',
       actorId: moderatorId ? String(moderatorId) : null,
       actorTag: moderatorTag ?? null,
+      actorType: 'moderator',
       note: 'Moderator replied from dashboard.'
     }).catch(() => {})
 
@@ -598,6 +620,11 @@ export class ModerationEngine {
     return getCaseForGuild(guildId, caseId)
   }
 
+  async getUserTotals(guildId, userId) {
+    await this.init()
+    return getUserTotals(guildId, userId)
+  }
+
   async setCaseStatus({ guildId, caseId, status, moderatorId, moderatorTag, note }) {
     await this.init()
     return updateCaseStatus({
@@ -606,12 +633,13 @@ export class ModerationEngine {
       status,
       actorId: moderatorId ? String(moderatorId) : null,
       actorTag: moderatorTag ?? null,
+      actorType: 'moderator',
       note: note ?? null
     })
   }
 
 
-  async notifyLog(guild, entry) {
+  async notifyLog(guild, caseEntry, actionRecord) {
     const alerts = this.config.alerts ?? {}
     const logChannelId = alerts.logChannelId
     if (!logChannelId) {
@@ -619,38 +647,69 @@ export class ModerationEngine {
     }
 
     try {
+      if (!caseEntry) {
+        return
+      }
       const channel = await this.getLogChannel(guild, logChannelId)
       if (!channel || !channel.isTextBased()) {
         return
       }
 
+      const actionType = actionRecord?.type ?? 'update'
+      const actionLabel = actionType.charAt(0).toUpperCase() + actionType.slice(1)
+      const reason =
+        actionRecord?.reason ?? caseEntry.metadata?.reason ?? 'No reason provided.'
+
       const embed = new EmbedBuilder()
-        .setTitle(`Automod: ${entry.action}`)
-        .setColor(this.colorForAction(entry.action))
+        .setTitle(`Moderation action: ${actionLabel}`)
+        .setColor(this.colorForAction(actionType))
         .addFields(
-          { name: 'User', value: `<@${entry.userId}> (${entry.userId})`, inline: false },
+          { name: 'User', value: `<@${caseEntry.userId}> (${caseEntry.userId})`, inline: false },
+          { name: 'Case ID', value: caseEntry.id, inline: true },
           {
             name: 'Reason',
-            value: entry.reason ?? 'No reason provided.',
+            value: reason,
             inline: false
           }
         )
-        .setTimestamp(new Date(entry.createdAt ?? Date.now()))
+        .setTimestamp(new Date(actionRecord?.createdAt ?? caseEntry.updatedAt ?? Date.now()))
 
-      if (entry.durationMinutes) {
+      if (caseEntry.subject) {
+        embed.setDescription(caseEntry.subject)
+      }
+
+      if (actionRecord?.durationMinutes) {
         embed.addFields({
           name: 'Duration',
-          value: `${entry.durationMinutes} minutes`,
+          value: `${actionRecord.durationMinutes} minutes`,
           inline: true
         })
       }
 
-      if (entry.moderatorId) {
+      if (actionRecord?.moderatorId) {
         embed.addFields({
           name: 'Moderator',
-          value: entry.moderatorTag ? `${entry.moderatorTag} (${entry.moderatorId})` : `<@${entry.moderatorId}>`,
+          value: actionRecord.moderatorTag
+            ? `${actionRecord.moderatorTag} (${actionRecord.moderatorId})`
+            : `<@${actionRecord.moderatorId}>`,
           inline: true
         })
+      }
+
+      if (caseEntry.status) {
+        const statusLabel = caseEntry.status
+          .split('-')
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(' ')
+        embed.addFields({
+          name: 'Case status',
+          value: statusLabel,
+          inline: true
+        })
+      }
+
+      if (actionRecord?.source) {
+        embed.addFields({ name: 'Source', value: actionRecord.source, inline: true })
       }
 
       const mentionStaff = alerts.notifyOnAutoAction && alerts.staffRoleId ? `<@&${alerts.staffRoleId}>` : null

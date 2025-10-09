@@ -380,7 +380,7 @@ export function createDashboard(client, moderation) {
         caseId: req.params.caseId,
         moderatorId,
         moderatorTag,
-        body: req.body?.body ?? ''
+        body: req.body?.body ?? req.body?.content ?? ''
       });
       const caseEntry = await moderation.getCaseDetails(req.params.guildId, req.params.caseId);
       res.json({ message, case: caseEntry });

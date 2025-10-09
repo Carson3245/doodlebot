@@ -8,6 +8,20 @@ const casesFile = path.join(moderationDirectory, 'cases.json')
 const MAX_CASES = 500
 const MAX_MESSAGES_PER_CASE = 400
 const MAX_ACTIONS_PER_CASE = 100
+const MAX_AUDIT_LOG_ENTRIES = 400
+const MAX_PARTICIPANTS = 25
+
+const STATUS_ALIASES = new Map([
+  ['pendingresponse', 'pending-response'],
+  ['pending-response', 'pending-response'],
+  ['waiting', 'pending-response'],
+  ['escalated', 'escalated'],
+  ['pending', 'pending'],
+  ['closed', 'closed'],
+  ['open', 'open']
+])
+
+const DEFAULT_STATUS = 'open'
 
 const defaultData = {
   updatedAt: null,
@@ -30,6 +44,20 @@ export async function recordCase(entry) {
   const now = new Date().toISOString()
   const { caseEntry, created } = getOrCreateActiveCase(data, entry, now)
 
+  ensureParticipant(caseEntry, {
+    type: 'member',
+    id: caseEntry.userId,
+    tag: caseEntry.userTag ?? null
+  })
+  if (entry.moderatorId) {
+    ensureParticipant(caseEntry, {
+      type: 'moderator',
+      id: entry.moderatorId,
+      tag: entry.moderatorTag ?? null
+    })
+  }
+  assignCaseSubject(caseEntry, entry)
+
   const actionRecord = createActionRecord(entry, now)
   caseEntry.actions.unshift(actionRecord)
   caseEntry.actions.splice(MAX_ACTIONS_PER_CASE)
@@ -39,8 +67,7 @@ export async function recordCase(entry) {
     body: buildSystemMessage(entry),
     via: entry.source ?? 'system'
   })
-  caseEntry.messages.push(systemMessage)
-  trimMessages(caseEntry)
+  registerCaseMessage(data, caseEntry, systemMessage, { markUnread: false })
 
   const auditRecord = {
     id: createId(),
@@ -48,13 +75,16 @@ export async function recordCase(entry) {
     action: entry.action,
     moderatorId: entry.moderatorId ? String(entry.moderatorId) : null,
     moderatorTag: entry.moderatorTag ?? null,
+    actorType: entry.moderatorId ? 'moderator' : 'system',
     createdAt: now,
     metadata: entry.metadata ?? null
   }
   caseEntry.auditLog.push(auditRecord)
+  trimAuditLog(caseEntry)
 
   caseEntry.updatedAt = now
   caseEntry.lastMessageAt = now
+  data.updatedAt = now
 
   const statsKey = actionToStatKey(entry.action)
   if (statsKey) {
@@ -66,7 +96,7 @@ export async function recordCase(entry) {
     data.updatedAt = now
   }
 
-  const totals = updateUserTotals(data, caseEntry, statsKey, now)
+  const totals = updateUserTotals(data, caseEntry, statsKey, now, created)
   sortCases(data)
   await persistData(data)
 
@@ -96,6 +126,11 @@ export async function ensureMemberCase({
   )
 
   if (existing) {
+    ensureParticipant(existing, {
+      type: 'member',
+      id: String(userId),
+      tag: userTag ?? null
+    })
     if (initialMessage) {
       const message = createMessage({
         authorType: 'member',
@@ -104,11 +139,15 @@ export async function ensureMemberCase({
         body: initialMessage,
         via: 'member'
       })
-      existing.messages.push(message)
-      trimMessages(existing)
-      existing.lastMessageAt = message.createdAt
-      existing.updatedAt = message.createdAt
+      registerCaseMessage(data, existing, message)
+      applyCaseStatus(data, existing, 'pending-response', {
+        type: 'member',
+        id: String(userId),
+        tag: userTag ?? null,
+        note: 'Member sent a new message when opening the case.'
+      }, message.createdAt)
       await persistData(data)
+      return existing
     }
     return existing
   }
@@ -126,27 +165,41 @@ export async function ensureMemberCase({
       reason: reason ?? null
     },
     source: 'member',
-    status: 'open'
+    status: initialMessage ? 'pending-response' : 'open'
   })
 
   if (reason) {
     newCase.metadata.reason = reason
   }
 
+  ensureParticipant(newCase, {
+    type: 'member',
+    id: String(userId),
+    tag: userTag ?? null
+  })
+  assignCaseSubject(newCase, { reason })
+
   if (initialMessage) {
-    newCase.messages.push(
-      createMessage({
-        authorType: 'member',
-        authorId: String(userId),
-        authorTag: userTag ?? null,
-        body: initialMessage,
-        via: 'member'
-      })
-    )
+    const message = createMessage({
+      authorType: 'member',
+      authorId: String(userId),
+      authorTag: userTag ?? null,
+      body: initialMessage,
+      via: 'member'
+    })
+    registerCaseMessage(data, newCase, message)
+    applyCaseStatus(data, newCase, 'pending-response', {
+      type: 'member',
+      id: String(userId),
+      tag: userTag ?? null,
+      note: 'Member opened a new support case.'
+    }, message.createdAt)
   }
 
   newCase.lastMessageAt = newCase.messages[0]?.createdAt ?? now
   newCase.updatedAt = now
+  data.stats.cases = (data.stats.cases ?? 0) + 1
+  data.updatedAt = now
 
   data.cases.unshift(newCase)
   trimCaseList(data)
@@ -180,27 +233,30 @@ export async function appendCaseMessage({
     body,
     via
   })
-  caseEntry.messages.push(message)
-  trimMessages(caseEntry)
-
-  caseEntry.lastMessageAt = message.createdAt
-  caseEntry.updatedAt = message.createdAt
-
-  caseEntry.auditLog.push({
-    id: createId(),
-    type: 'message',
-    authorType,
-    authorId: authorId ? String(authorId) : null,
-    authorTag: authorTag ?? null,
-    createdAt: message.createdAt
-  })
-
+  registerCaseMessage(data, caseEntry, message)
+  if (authorType === 'member') {
+    applyCaseStatus(data, caseEntry, 'pending-response', {
+      type: 'member',
+      id: authorId ? String(authorId) : null,
+      tag: authorTag ?? null,
+      note: 'Member replied via bot channel.'
+    }, message.createdAt)
+  }
   await persistData(data)
   return message
 }
 
-export async function updateCaseStatus({ guildId, caseId, status, actorId, actorTag, note }) {
-  if (!['open', 'pending', 'closed'].includes(status)) {
+export async function updateCaseStatus({
+  guildId,
+  caseId,
+  status,
+  actorId,
+  actorTag,
+  actorType = 'system',
+  note
+}) {
+  const normalized = normalizeStatus(status)
+  if (!normalized) {
     throw new Error('Invalid case status')
   }
 
@@ -211,17 +267,18 @@ export async function updateCaseStatus({ guildId, caseId, status, actorId, actor
   }
 
   const now = new Date().toISOString()
-  caseEntry.status = status
-  caseEntry.updatedAt = now
-  caseEntry.auditLog.push({
-    id: createId(),
-    type: 'status',
-    status,
-    note: note ?? null,
-    actorId: actorId ? String(actorId) : null,
-    actorTag: actorTag ?? null,
-    createdAt: now
-  })
+  applyCaseStatus(
+    data,
+    caseEntry,
+    normalized,
+    {
+      type: actorType,
+      id: actorId ? String(actorId) : null,
+      tag: actorTag ?? null,
+      note: note ?? null
+    },
+    now
+  )
 
   await persistData(data)
   return caseEntry
@@ -231,7 +288,11 @@ export async function listCases({ guildId, status, limit = 50 }) {
   const data = await loadData()
   let items = data.cases.filter((item) => item.guildId === String(guildId))
   if (status && status !== 'all') {
-    items = items.filter((item) => item.status === status)
+    const normalized = normalizeStatus(status)
+    if (!normalized) {
+      return []
+    }
+    items = items.filter((item) => item.status === normalized)
   }
   return items.slice(0, Math.max(0, Math.min(limit, MAX_CASES)))
 }
@@ -293,7 +354,7 @@ function getOrCreateActiveCase(data, entry, now) {
     guildName: entry.guildName,
     userId,
     userTag: entry.userTag,
-    status: entry.status ?? 'open',
+    status: normalizeStatus(entry.status) ?? DEFAULT_STATUS,
     source: entry.source ?? 'system',
     openedBy: {
       type: entry.moderatorId ? 'moderator' : 'system',
@@ -303,6 +364,20 @@ function getOrCreateActiveCase(data, entry, now) {
       reason: entry.reason ?? null
     }
   })
+
+  ensureParticipant(newCase, {
+    type: 'member',
+    id: userId,
+    tag: entry.userTag ?? null
+  })
+  if (entry.moderatorId) {
+    ensureParticipant(newCase, {
+      type: 'moderator',
+      id: String(entry.moderatorId),
+      tag: entry.moderatorTag ?? null
+    })
+  }
+  assignCaseSubject(newCase, entry)
 
   data.cases.unshift(newCase)
   trimCaseList(data)
@@ -328,6 +403,9 @@ function createCaseShell({ guildId, guildName, userId, userTag, status, source, 
     createdAt: now,
     updatedAt: now,
     lastMessageAt: null,
+    subject: null,
+    participants: [],
+    unreadCount: 0,
     actions: [],
     messages: [],
     auditLog: []
@@ -379,13 +457,17 @@ function createMessage({ authorType, authorId, authorTag, body, via }) {
   }
 }
 
-function updateUserTotals(data, caseEntry, statsKey, now) {
+function updateUserTotals(data, caseEntry, statsKey, now, caseCreated = false) {
   const key = getTotalsKey(caseEntry.guildId, caseEntry.userId)
   const previous = data.userTotals[key] ?? defaultTotals()
   const totals = {
     ...previous,
-    cases: (previous.cases ?? 0) + 1,
+    cases: (previous.cases ?? 0) + (caseCreated ? 1 : 0),
     lastActionAt: now
+  }
+
+  if (!caseCreated && (totals.cases ?? 0) === 0) {
+    totals.cases = 1
   }
 
   if (statsKey && statsKey in totals) {
@@ -402,10 +484,313 @@ function findCase(data, guildId, caseId) {
   )
 }
 
+function registerCaseMessage(data, caseEntry, message, { markUnread } = {}) {
+  if (!Array.isArray(caseEntry.messages)) {
+    caseEntry.messages = []
+  }
+  caseEntry.messages.push(message)
+  trimMessages(caseEntry)
+
+  caseEntry.lastMessageAt = message.createdAt
+  caseEntry.updatedAt = message.createdAt
+  data.updatedAt = message.createdAt
+
+  ensureParticipantFromMessage(caseEntry, message)
+
+  if (markUnread === true || (markUnread === undefined && message.authorType === 'member')) {
+    caseEntry.unreadCount = Math.min(
+      (caseEntry.unreadCount ?? 0) + 1,
+      caseEntry.messages.length
+    )
+  } else if (markUnread === false || (markUnread === undefined && message.authorType === 'moderator')) {
+    caseEntry.unreadCount = 0
+  }
+
+  caseEntry.auditLog.push({
+    id: createId(),
+    type: 'message',
+    authorType: message.authorType ?? 'system',
+    authorId: message.authorId ? String(message.authorId) : null,
+    authorTag: message.authorTag ?? null,
+    createdAt: message.createdAt,
+    note: null
+  })
+  trimAuditLog(caseEntry)
+}
+
+function applyCaseStatus(data, caseEntry, status, actor = {}, timestamp = new Date().toISOString()) {
+  const normalized = normalizeStatus(status)
+  if (!normalized) {
+    return false
+  }
+
+  const current = caseEntry.status ?? DEFAULT_STATUS
+  const changed = current !== normalized
+  if (!changed && !actor.note) {
+    return false
+  }
+
+  caseEntry.status = normalized
+  caseEntry.updatedAt = timestamp
+  data.updatedAt = timestamp
+
+  const entry = {
+    id: createId(),
+    type: 'status',
+    status: normalized,
+    note: actor.note ?? null,
+    actorId: actor.id ?? null,
+    actorTag: actor.tag ?? null,
+    actorType: actor.type ?? 'system',
+    createdAt: timestamp
+  }
+  if (entry.actorId) {
+    entry.actorId = String(entry.actorId)
+  }
+  caseEntry.auditLog.push(entry)
+  trimAuditLog(caseEntry)
+
+  if (normalized === 'closed') {
+    caseEntry.unreadCount = 0
+  }
+
+  return true
+}
+
 function trimMessages(caseEntry) {
   if (caseEntry.messages.length > MAX_MESSAGES_PER_CASE) {
     caseEntry.messages.splice(0, caseEntry.messages.length - MAX_MESSAGES_PER_CASE)
   }
+}
+
+function trimAuditLog(caseEntry) {
+  if (!Array.isArray(caseEntry.auditLog)) {
+    caseEntry.auditLog = []
+    return
+  }
+  if (caseEntry.auditLog.length > MAX_AUDIT_LOG_ENTRIES) {
+    caseEntry.auditLog.splice(0, caseEntry.auditLog.length - MAX_AUDIT_LOG_ENTRIES)
+  }
+}
+
+function ensureParticipant(caseEntry, participant) {
+  if (!participant) {
+    return
+  }
+  const normalized = normalizeParticipant(participant)
+  if (!normalized) {
+    return
+  }
+  if (!Array.isArray(caseEntry.participants)) {
+    caseEntry.participants = []
+  }
+  const key = `${normalized.type}:${normalized.id}`
+  const existingIndex = caseEntry.participants.findIndex(
+    (item) => `${item.type ?? 'member'}:${item.id}` === key
+  )
+  if (existingIndex !== -1) {
+    caseEntry.participants[existingIndex] = {
+      ...caseEntry.participants[existingIndex],
+      ...normalized,
+      addedAt: caseEntry.participants[existingIndex].addedAt ?? normalized.addedAt
+    }
+    return
+  }
+  caseEntry.participants.push(normalized)
+  if (caseEntry.participants.length > MAX_PARTICIPANTS) {
+    caseEntry.participants.splice(0, caseEntry.participants.length - MAX_PARTICIPANTS)
+  }
+}
+
+function ensureParticipantFromMessage(caseEntry, message) {
+  if (!message) {
+    return
+  }
+  if (message.authorType === 'member' && message.authorId) {
+    ensureParticipant(caseEntry, {
+      type: 'member',
+      id: String(message.authorId),
+      tag: message.authorTag ?? null
+    })
+  } else if (message.authorType === 'moderator' && message.authorId) {
+    ensureParticipant(caseEntry, {
+      type: 'moderator',
+      id: String(message.authorId),
+      tag: message.authorTag ?? null
+    })
+  }
+}
+
+function normalizeParticipant(participant = {}) {
+  const id = participant.id ?? participant.userId ?? null
+  if (!id) {
+    return null
+  }
+  const now = new Date().toISOString()
+  const typeValue = typeof participant.type === 'string' ? participant.type.toLowerCase() : null
+  const allowedTypes = new Set(['member', 'moderator', 'system', 'bot', 'other'])
+  const type = allowedTypes.has(typeValue) ? typeValue : 'member'
+  return {
+    id: String(id),
+    type,
+    tag: participant.tag ?? null,
+    displayName: participant.displayName ?? null,
+    username: participant.username ?? null,
+    addedAt: participant.addedAt ?? now
+  }
+}
+
+function normalizeParticipants(raw, fallback = {}) {
+  const participants = []
+  const seen = new Set()
+  const push = (value) => {
+    const normalized = normalizeParticipant(value)
+    if (!normalized) {
+      return
+    }
+    const key = `${normalized.type}:${normalized.id}`
+    if (seen.has(key)) {
+      return
+    }
+    seen.add(key)
+    participants.push(normalized)
+  }
+
+  if (Array.isArray(raw)) {
+    for (const entry of raw) {
+      push(entry)
+    }
+  }
+
+  if (fallback.userId) {
+    push({ type: 'member', id: fallback.userId, tag: fallback.userTag ?? null })
+  }
+
+  if (participants.length > MAX_PARTICIPANTS) {
+    return participants.slice(-MAX_PARTICIPANTS)
+  }
+
+  return participants
+}
+
+function normalizeActionRecord(raw = {}) {
+  const createdAt = raw.createdAt ?? new Date().toISOString()
+  const durationValue = raw.durationMinutes ?? raw.duration ?? null
+  const durationNumber = Number(durationValue)
+  const typeValue =
+    typeof raw.type === 'string'
+      ? raw.type.toLowerCase()
+      : typeof raw.action === 'string'
+        ? raw.action.toLowerCase()
+        : 'action'
+  return {
+    id: raw.id ?? createId(),
+    type: typeValue,
+    reason: raw.reason ?? null,
+    durationMinutes: Number.isFinite(durationNumber) && durationNumber > 0 ? durationNumber : null,
+    moderatorId: raw.moderatorId ? String(raw.moderatorId) : null,
+    moderatorTag: raw.moderatorTag ?? null,
+    createdAt,
+    source: raw.source ?? null,
+    metadata: raw.metadata ?? null
+  }
+}
+
+function normalizeMessageRecord(raw = {}) {
+  const createdAt = raw.createdAt ?? new Date().toISOString()
+  const authorType =
+    typeof raw.authorType === 'string' ? raw.authorType.toLowerCase() : 'system'
+  return {
+    id: raw.id ?? createId(),
+    authorType,
+    authorId: raw.authorId ? String(raw.authorId) : null,
+    authorTag: raw.authorTag ?? null,
+    body: typeof raw.body === 'string' ? raw.body.trim() : '',
+    via: raw.via ?? null,
+    createdAt
+  }
+}
+
+function normalizeAuditRecord(raw = {}) {
+  const createdAt = raw.createdAt ?? new Date().toISOString()
+  const type = typeof raw.type === 'string' ? raw.type.toLowerCase() : 'message'
+  const actorType =
+    typeof raw.actorType === 'string'
+      ? raw.actorType.toLowerCase()
+      : typeof raw.authorType === 'string'
+        ? raw.authorType.toLowerCase()
+        : 'system'
+  return {
+    id: raw.id ?? createId(),
+    type,
+    status: raw.status ?? null,
+    action: raw.action ?? null,
+    note: raw.note ?? null,
+    actorId: raw.actorId ? String(raw.actorId) : raw.moderatorId ? String(raw.moderatorId) : null,
+    actorTag: raw.actorTag ?? raw.moderatorTag ?? null,
+    actorType,
+    createdAt,
+    metadata: raw.metadata ?? null
+  }
+}
+
+function coerceNonNegativeInteger(value, fallback = 0) {
+  if (value === null || value === undefined || value === '') {
+    return fallback
+  }
+  const number = Number(value)
+  if (!Number.isFinite(number)) {
+    return fallback
+  }
+  return Math.max(0, Math.floor(number))
+}
+
+function normalizeStatus(status) {
+  if (status === null || status === undefined) {
+    return DEFAULT_STATUS
+  }
+  const key = String(status).toLowerCase().trim()
+  if (!key.length) {
+    return DEFAULT_STATUS
+  }
+  if (STATUS_ALIASES.has(key)) {
+    return STATUS_ALIASES.get(key)
+  }
+  return null
+}
+
+function assignCaseSubject(caseEntry, entry = {}) {
+  if (caseEntry.subject && caseEntry.subject.trim()) {
+    caseEntry.subject = caseEntry.subject.trim()
+    return
+  }
+
+  const reason = entry.reason ?? caseEntry.metadata?.reason ?? null
+  if (typeof reason === 'string' && reason.trim().length) {
+    caseEntry.subject = reason.trim().slice(0, 200)
+    return
+  }
+
+  const action = entry.action ?? caseEntry.actions?.[0]?.type ?? null
+  if (typeof action === 'string' && action.trim().length) {
+    caseEntry.subject = `Moderation: ${capitalize(action)}`
+    return
+  }
+
+  const memberMessage = caseEntry.messages?.find((message) => message.authorType === 'member' && message.body)
+  if (memberMessage) {
+    caseEntry.subject = memberMessage.body.slice(0, 80)
+    return
+  }
+
+  caseEntry.subject = `Case for ${caseEntry.userTag ?? caseEntry.userId}`
+}
+
+function capitalize(text) {
+  if (typeof text !== 'string' || !text.length) {
+    return ''
+  }
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }
 
 function trimCaseList(data) {
@@ -494,18 +879,58 @@ function mergeWithDefaults(raw = {}) {
         guildName: item.guildName ?? null,
         userId: item.userId ? String(item.userId) : null,
         userTag: item.userTag ?? null,
-        status: ['open', 'pending', 'closed'].includes(item.status) ? item.status : 'open',
+        status: normalizeStatus(item.status) ?? DEFAULT_STATUS,
         source: item.source ?? 'system',
-        metadata: typeof item.metadata === 'object' && item.metadata !== null ? item.metadata : {},
+        metadata: typeof item.metadata === 'object' && item.metadata !== null ? { ...item.metadata } : {},
         openedBy: item.openedBy ?? null,
         createdAt: item.createdAt ?? new Date().toISOString(),
         updatedAt: item.updatedAt ?? item.createdAt ?? new Date().toISOString(),
         lastMessageAt: item.lastMessageAt ?? null,
-        actions: Array.isArray(item.actions) ? item.actions.slice(0, MAX_ACTIONS_PER_CASE) : [],
-        messages: Array.isArray(item.messages) ? item.messages.slice(-MAX_MESSAGES_PER_CASE) : [],
-        auditLog: Array.isArray(item.auditLog) ? item.auditLog.slice(-MAX_MESSAGES_PER_CASE) : []
+        subject:
+          typeof item.subject === 'string' && item.subject.trim().length
+            ? item.subject.trim()
+            : null,
+        participants: normalizeParticipants(item.participants, {
+          userId: item.userId ? String(item.userId) : null,
+          userTag: item.userTag ?? null
+        }),
+        unreadCount: coerceNonNegativeInteger(item.unreadCount, 0),
+        actions: Array.isArray(item.actions)
+          ? item.actions
+              .slice(0, MAX_ACTIONS_PER_CASE)
+              .map((action) => normalizeActionRecord(action))
+          : [],
+        messages: Array.isArray(item.messages)
+          ? item.messages
+              .slice(-MAX_MESSAGES_PER_CASE)
+              .map((message) => normalizeMessageRecord(message))
+              .filter(Boolean)
+          : [],
+        auditLog: Array.isArray(item.auditLog)
+          ? item.auditLog
+              .slice(-MAX_AUDIT_LOG_ENTRIES)
+              .map((entry) => normalizeAuditRecord(entry))
+              .filter(Boolean)
+          : []
       }))
       .filter((item) => item.guildId && item.userId)
+      .map((caseEntry) => {
+        ensureParticipant(caseEntry, {
+          type: 'member',
+          id: caseEntry.userId,
+          tag: caseEntry.userTag ?? null
+        })
+        if (caseEntry.unreadCount > caseEntry.messages.length) {
+          caseEntry.unreadCount = caseEntry.messages.length
+        }
+        assignCaseSubject(caseEntry, {
+          reason: caseEntry.metadata?.reason ?? null,
+          action: caseEntry.actions[0]?.type ?? null
+        })
+        trimAuditLog(caseEntry)
+        trimMessages(caseEntry)
+        return caseEntry
+      })
   }
 
   if (raw.userTotals && typeof raw.userTotals === 'object') {

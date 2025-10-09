@@ -13,6 +13,13 @@ export default function LoginPage() {
     }
   }, [authenticated, loading, navigate])
 
+  useEffect(() => {
+    document.body.classList.add('auth-page-active')
+    return () => {
+      document.body.classList.remove('auth-page-active')
+    }
+  }, [])
+
   return (
     <div className="page auth-page">
       <div className="auth-card">
