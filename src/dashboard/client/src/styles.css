@@ -63,7 +63,7 @@ a {
   background:
     radial-gradient(circle at 20% 10%, rgba(94, 109, 255, 0.12), transparent 45%),
     radial-gradient(circle at 80% 18%, rgba(255, 178, 72, 0.14), transparent 40%),
-    url('assets/stars.png') center/640px repeat,
+    url('assets/stars.svg') center/640px repeat,
     var(--background-soft);
   opacity: 0.85;
   pointer-events: none;
