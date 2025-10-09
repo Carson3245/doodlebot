@@ -54,6 +54,8 @@ export default function ModerationPage() {
   })
   const lookupTimers = useRef({})
   const caseMenuRef = useRef(null)
+  const eventSourceRef = useRef(null)
+  const reconnectTimerRef = useRef(null)
   const [quickActionTargets, setQuickActionTargets] = useState({
     ban: null,
     timeout: null,
@@ -101,6 +103,66 @@ export default function ModerationPage() {
   const [saving, setSaving] = useState(false)
   const [guildOptions, setGuildOptions] = useState([])
   const [quickActions, setQuickActions] = useState(() => createQuickActionState())
+
+  const handleRealtimeEvent = useCallback(
+    (event) => {
+      if (!authenticated) {
+        return
+      }
+      if (!event || typeof event !== 'object') {
+        return
+      }
+      const { type, payload } = event
+      if (!type) {
+        return
+      }
+      if (type === 'connected') {
+        return
+      }
+      if (type === 'stats:updated') {
+        if (payload && typeof payload === 'object') {
+          setStats({
+            loading: false,
+            bans: payload.bans ?? 0,
+            timeouts: payload.timeouts ?? 0,
+            warnings: payload.warnings ?? 0,
+            cases: payload.cases ?? 0,
+            updatedAt: payload.updatedAt ?? null,
+            error: null
+          })
+        } else {
+          loadStats()
+        }
+        return
+      }
+
+      if (
+        type === 'case:message' ||
+        type === 'cases:updated' ||
+        type === 'case:status' ||
+        type === 'case:created'
+      ) {
+        loadCases()
+        const targetCaseId = payload?.caseId ?? payload?.id ?? null
+        if (targetCaseId && caseInbox.selectedCaseId === targetCaseId) {
+          const guildId =
+            payload?.guildId ?? caseInbox.selectedCaseGuildId ?? selectedGuild?.id ?? null
+          if (guildId) {
+            loadCaseDetail(targetCaseId, guildId)
+          }
+        }
+      }
+    },
+    [
+      authenticated,
+      caseInbox.selectedCaseId,
+      caseInbox.selectedCaseGuildId,
+      loadCaseDetail,
+      loadCases,
+      loadStats,
+      selectedGuild?.id
+    ]
+  )
   useEffect(() => {
     Object.values(lookupTimers.current).forEach((timer) => clearTimeout(timer))
     lookupTimers.current = {}
@@ -342,6 +404,76 @@ export default function ModerationPage() {
       loadCaseDetail(null, null)
     }
   }, [caseInbox.selectedCaseGuildId, caseInbox.selectedCaseId, loadCaseDetail, selectedGuild?.id])
+
+  useEffect(() => {
+    if (!authenticated) {
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+      return
+    }
+
+    let cancelled = false
+
+    const connect = () => {
+      if (cancelled || eventSourceRef.current) {
+        return
+      }
+      const source = new EventSource('/api/moderation/events')
+      eventSourceRef.current = source
+
+      source.onmessage = (event) => {
+        if (!event?.data) {
+          return
+        }
+        try {
+          const parsed = JSON.parse(event.data)
+          handleRealtimeEvent(parsed)
+        } catch (error) {
+          console.error('Failed to parse moderation event payload', error, event.data)
+        }
+      }
+
+      source.onerror = () => {
+        if (cancelled) {
+          return
+        }
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close()
+          eventSourceRef.current = null
+        }
+        if (typeof refreshAuth === 'function') {
+          refreshAuth()
+        }
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current)
+        }
+        reconnectTimerRef.current = setTimeout(() => {
+          reconnectTimerRef.current = null
+          connect()
+        }, 5000)
+      }
+    }
+
+    connect()
+
+    return () => {
+      cancelled = true
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+    }
+  }, [authenticated, handleRealtimeEvent, refreshAuth])
 
   useEffect(() => {
     const handleClickAway = (event) => {

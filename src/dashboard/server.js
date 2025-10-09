@@ -10,6 +10,7 @@ import { loadStyle, saveStyle } from '../config/styleStore.js';
 import { getBrainSummary } from '../brain/brainStore.js';
 import { loadCommandConfig, saveCommandConfig } from '../config/commandStore.js';
 import { loadModerationConfig, saveModerationConfig } from '../config/moderationStore.js';
+import { onModerationStoreEvent } from '../moderation/caseStore.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const legacyPublicDir = path.join(__dirname, 'public');
@@ -580,6 +581,60 @@ export function createDashboard(client, moderation) {
       console.error('Failed to load moderation stats:', error);
       res.status(500).json({ error: 'Could not load moderation stats.' });
     }
+  });
+
+  api.get('/moderation/events', (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
+
+    const writeEvent = (event) => {
+      if (!event) {
+        return;
+      }
+      try {
+        res.write(`data: ${JSON.stringify(event)}\n\n`);
+      } catch (error) {
+        console.error('Failed to stream moderation event:', error);
+      }
+    };
+
+    const initialEnvelope = {
+      type: 'connected',
+      payload: { source: 'moderation-events' },
+      timestamp: new Date().toISOString()
+    };
+    writeEvent(initialEnvelope);
+
+    const unsubscribe = onModerationStoreEvent((event) => {
+      writeEvent(event);
+    });
+
+    const heartbeat = setInterval(() => {
+      res.write(':heartbeat\n\n');
+    }, 30000);
+
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+
+    moderation
+      .getStats()
+      .then((stats) => {
+        writeEvent({ type: 'stats:updated', payload: stats, timestamp: new Date().toISOString() });
+      })
+      .catch((error) => {
+        console.error('Failed to send initial stats snapshot:', error);
+      });
   });
 
   api.get('/moderation/cases', async (req, res) => {

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { EventEmitter } from 'node:events'
 
 const moderationDirectory = path.resolve(process.cwd(), 'data', 'moderation')
 const casesFile = path.join(moderationDirectory, 'cases.json')
@@ -37,6 +38,28 @@ const defaultData = {
 
 let cache = null
 let loaded = false
+
+const storeEvents = new EventEmitter()
+storeEvents.setMaxListeners(50)
+
+function emitStoreEvent(type, payload) {
+  const envelope = {
+    type,
+    payload: payload ?? null,
+    timestamp: new Date().toISOString()
+  }
+  storeEvents.emit('event', envelope)
+}
+
+export function onModerationStoreEvent(listener) {
+  if (typeof listener !== 'function') {
+    return () => {}
+  }
+  storeEvents.on('event', listener)
+  return () => {
+    storeEvents.off('event', listener)
+  }
+}
 
 export async function recordCase(entry) {
   validateCasePayload(entry)
@@ -100,6 +123,9 @@ export async function recordCase(entry) {
   sortCases(data)
   await persistData(data)
 
+  emitStoreEvent('stats:updated', buildStatsSnapshot(data))
+  emitStoreEvent('cases:updated', summarizeCaseUpdate(caseEntry))
+
   return {
     entry: caseEntry,
     action: actionRecord,
@@ -147,6 +173,13 @@ export async function ensureMemberCase({
         note: 'Member sent a new message when opening the case.'
       }, message.createdAt)
       await persistData(data)
+      emitStoreEvent('case:message', {
+        guildId: existing.guildId,
+        caseId: existing.id,
+        message
+      })
+      emitStoreEvent('cases:updated', summarizeCaseUpdate(existing))
+      emitStoreEvent('stats:updated', buildStatsSnapshot(data))
       return existing
     }
     return existing
@@ -204,6 +237,16 @@ export async function ensureMemberCase({
   data.cases.unshift(newCase)
   trimCaseList(data)
   await persistData(data)
+  emitStoreEvent('case:created', summarizeCaseUpdate(newCase))
+  if (newCase.messages[0]) {
+    emitStoreEvent('case:message', {
+      guildId: newCase.guildId,
+      caseId: newCase.id,
+      message: newCase.messages[0]
+    })
+  }
+  emitStoreEvent('cases:updated', summarizeCaseUpdate(newCase))
+  emitStoreEvent('stats:updated', buildStatsSnapshot(data))
   return newCase
 }
 
@@ -267,6 +310,13 @@ export async function appendCaseMessage({
     }, message.createdAt)
   }
   await persistData(data)
+  emitStoreEvent('case:message', {
+    guildId: caseEntry.guildId,
+    caseId: caseEntry.id,
+    message
+  })
+  emitStoreEvent('cases:updated', summarizeCaseUpdate(caseEntry))
+  emitStoreEvent('stats:updated', buildStatsSnapshot(data))
   return message
 }
 
@@ -305,6 +355,9 @@ export async function updateCaseStatus({
   )
 
   await persistData(data)
+  emitStoreEvent('case:status', summarizeCaseUpdate(caseEntry))
+  emitStoreEvent('cases:updated', summarizeCaseUpdate(caseEntry))
+  emitStoreEvent('stats:updated', buildStatsSnapshot(data))
   return caseEntry
 }
 
@@ -354,6 +407,36 @@ export async function getUserTotals(guildId, userId) {
   const data = await loadData()
   const totalsKey = getTotalsKey(guildId, userId)
   return data.userTotals[totalsKey] ? { ...data.userTotals[totalsKey] } : defaultTotals()
+}
+
+function buildStatsSnapshot(data) {
+  const stats = data?.stats ?? {}
+  const casesCount =
+    stats.cases ?? (Array.isArray(data?.cases) ? data.cases.length : 0)
+  return {
+    updatedAt: data?.updatedAt ?? null,
+    warnings: stats.warnings ?? 0,
+    timeouts: stats.timeouts ?? 0,
+    bans: stats.bans ?? 0,
+    cases: casesCount
+  }
+}
+
+function summarizeCaseUpdate(caseEntry) {
+  if (!caseEntry) {
+    return null
+  }
+  return {
+    guildId: caseEntry.guildId ?? null,
+    caseId: caseEntry.id ?? null,
+    status: caseEntry.status ?? null,
+    updatedAt: caseEntry.updatedAt ?? caseEntry.createdAt ?? null,
+    unreadCount: caseEntry.unreadCount ?? 0,
+    subject: caseEntry.subject ?? null,
+    userId: caseEntry.userId ?? null,
+    userTag: caseEntry.userTag ?? null,
+    lastMessageAt: caseEntry.lastMessageAt ?? null
+  }
 }
 
 function validateCasePayload(entry = {}) {
