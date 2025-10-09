@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useGuild } from '../guildContext.js'
-import { useAuth } from '../authContext.js'
+import { useGuild } from '../guild.jsx'
+import { useAuth } from '../auth.jsx'
 import { formatDateTime } from '../utils.js'
 
 const FILTER_DETAILS = {
@@ -1022,14 +1022,8 @@ const submitQuickAction = useCallback(
               )}
             </form>
           </div>
-        ) : (
-          <p className="placeholder">Select a server to run quick actions.</p>
-        )}
-        {!authenticated && (
-          <p className="helper">
-            Log in with your moderator account to unlock quick actions.
-          </p>
-        )}
+        ) : null}
+        {!authenticated && <p className="helper">Log in with your moderator account to unlock quick actions.</p>}
         </div>
       </section>
 
