@@ -13,7 +13,8 @@ import {
   appendCaseMessage,
   updateCaseStatus,
   listCases,
-  getCaseForGuild
+  getCaseForGuild,
+  getCase
 } from './caseStore.js'
 
 const LINK_REGEX = /(https?:\/\/|www\.)\S+/i
@@ -585,6 +586,11 @@ export class ModerationEngine {
   async listCasesForGuild(guildId, { status = 'all', limit = 50 } = {}) {
     await this.init()
     return listCases({ guildId, status, limit })
+  }
+
+  async getCase(caseId) {
+    await this.init()
+    return getCase(caseId)
   }
 
   async getCaseDetails(guildId, caseId) {

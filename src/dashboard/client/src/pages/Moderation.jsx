@@ -72,7 +72,8 @@ export default function ModerationPage() {
     loading: true,
     items: [],
     error: null,
-    selectedCaseId: null
+    selectedCaseId: null,
+    selectedCaseGuildId: null
   })
   const [caseDetail, setCaseDetail] = useState({
     loading: false,
@@ -175,7 +176,8 @@ export default function ModerationPage() {
         loading: false,
         items: [],
         error: null,
-        selectedCaseId: null
+        selectedCaseId: null,
+        selectedCaseGuildId: null
       })
       setCaseDetail({
         loading: false,
@@ -196,7 +198,8 @@ export default function ModerationPage() {
 
     try {
       setCaseInbox((prev) => ({ ...prev, loading: true, error: null }))
-      const response = await fetch('/api/moderation/cases')
+      const query = selectedGuild?.id ? `?guildId=${encodeURIComponent(selectedGuild.id)}` : ''
+      const response = await fetch(`/api/moderation/cases${query}`)
       if (response.status === 401) {
         refreshAuth()
         return
@@ -208,11 +211,16 @@ export default function ModerationPage() {
       setCaseInbox((prev) => {
         const items = Array.isArray(data) ? data : []
         const hasCurrent = prev.selectedCaseId && items.some((item) => item.id === prev.selectedCaseId)
+        const nextSelectedCaseId = hasCurrent ? prev.selectedCaseId : items[0]?.id ?? null
+        const nextSelectedGuildId = nextSelectedCaseId
+          ? items.find((item) => item.id === nextSelectedCaseId)?.guildId ?? null
+          : null
         return {
           loading: false,
           items,
           error: null,
-          selectedCaseId: hasCurrent ? prev.selectedCaseId : items[0]?.id ?? null
+          selectedCaseId: nextSelectedCaseId,
+          selectedCaseGuildId: nextSelectedGuildId
         }
       })
     } catch (error) {
@@ -223,7 +231,7 @@ export default function ModerationPage() {
         error: 'Unable to load moderation cases.'
       }))
     }
-  }, [authenticated, refreshAuth])
+  }, [authenticated, refreshAuth, selectedGuild?.id])
 
   const loadGuilds = useCallback(async () => {
     if (!authenticated) {
@@ -249,8 +257,8 @@ export default function ModerationPage() {
   }, [authenticated, refreshAuth])
 
   const loadCaseDetail = useCallback(
-    async (caseId) => {
-      if (!caseId || !authenticated) {
+    async (caseId, guildId) => {
+      if (!caseId || !guildId || !authenticated) {
         setCaseDetail({
           loading: false,
           messages: [],
@@ -270,7 +278,7 @@ export default function ModerationPage() {
 
       try {
         setCaseDetail((prev) => ({ ...prev, loading: true, error: null }))
-        const response = await fetch(`/api/moderation/cases/${caseId}`)
+        const response = await fetch(`/api/guilds/${guildId}/cases/${caseId}`)
         if (response.status === 401) {
           refreshAuth()
           return
@@ -297,7 +305,8 @@ export default function ModerationPage() {
           ...prev,
           items: prev.items.map((item) =>
             item.id === caseId ? { ...item, unreadCount: 0, status: data?.status ?? item.status } : item
-          )
+          ),
+          selectedCaseGuildId: guildId
         }))
       } catch (error) {
         console.error('Failed to load case detail', error)
@@ -327,11 +336,12 @@ export default function ModerationPage() {
 
   useEffect(() => {
     if (caseInbox.selectedCaseId) {
-      loadCaseDetail(caseInbox.selectedCaseId)
+      const guildId = caseInbox.selectedCaseGuildId || selectedGuild?.id || null
+      loadCaseDetail(caseInbox.selectedCaseId, guildId)
     } else {
-      loadCaseDetail(null)
+      loadCaseDetail(null, null)
     }
-  }, [caseInbox.selectedCaseId, loadCaseDetail])
+  }, [caseInbox.selectedCaseGuildId, caseInbox.selectedCaseId, loadCaseDetail, selectedGuild?.id])
 
   useEffect(() => {
     const handleClickAway = (event) => {
@@ -407,10 +417,14 @@ export default function ModerationPage() {
   }, [])
 
   const handleSelectCase = useCallback((caseId) => {
-    setCaseInbox((prev) => ({
-      ...prev,
-      selectedCaseId: caseId
-    }))
+    setCaseInbox((prev) => {
+      const match = prev.items.find((item) => item.id === caseId)
+      return {
+        ...prev,
+        selectedCaseId: caseId,
+        selectedCaseGuildId: match?.guildId ?? prev.selectedCaseGuildId ?? null
+      }
+    })
     setCaseMenuOpen(false)
   }, [])
 
@@ -424,6 +438,14 @@ export default function ModerationPage() {
       if (!trimmed) {
         return
       }
+      const guildId = selectedGuild?.id || caseInbox.selectedCaseGuildId
+      if (!guildId) {
+        setCaseDetail((prev) => ({
+          ...prev,
+          error: 'Select a guild to reply to this case.'
+        }))
+        return
+      }
       if (!authenticated) {
         setCaseDetail((prev) => ({
           ...prev,
@@ -434,7 +456,7 @@ export default function ModerationPage() {
 
       setCaseDetail((prev) => ({ ...prev, sending: true, error: null }))
       try {
-        const response = await fetch(`/api/moderation/cases/${caseInbox.selectedCaseId}/messages`, {
+        const response = await fetch(`/api/guilds/${guildId}/cases/${caseInbox.selectedCaseId}/messages`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: trimmed })
@@ -453,7 +475,7 @@ export default function ModerationPage() {
           throw new Error(data?.error || 'Unable to send message.')
         }
         setCaseReply('')
-        await loadCaseDetail(caseInbox.selectedCaseId)
+        await loadCaseDetail(caseInbox.selectedCaseId, guildId)
       } catch (error) {
         console.error('Failed to send case reply', error)
         setCaseDetail((prev) => ({
@@ -466,12 +488,29 @@ export default function ModerationPage() {
       setCaseDetail((prev) => ({ ...prev, sending: false }))
       loadCases()
     },
-    [authenticated, caseInbox.selectedCaseId, caseReply, loadCaseDetail, loadCases, refreshAuth]
+    [
+      authenticated,
+      caseInbox.selectedCaseGuildId,
+      caseInbox.selectedCaseId,
+      caseReply,
+      loadCaseDetail,
+      loadCases,
+      refreshAuth,
+      selectedGuild?.id
+    ]
   )
 
   const handleUpdateCaseStatus = useCallback(
     async (nextStatus) => {
       if (!caseInbox.selectedCaseId) {
+        return
+      }
+      const guildId = selectedGuild?.id || caseInbox.selectedCaseGuildId
+      if (!guildId) {
+        setCaseDetail((prev) => ({
+          ...prev,
+          error: 'Select a guild before updating the case status.'
+        }))
         return
       }
       if (!authenticated) {
@@ -484,7 +523,7 @@ export default function ModerationPage() {
 
       setCaseDetail((prev) => ({ ...prev, statusUpdating: true, error: null }))
       try {
-        const response = await fetch(`/api/moderation/cases/${caseInbox.selectedCaseId}/status`, {
+        const response = await fetch(`/api/guilds/${guildId}/cases/${caseInbox.selectedCaseId}/status`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ status: nextStatus })
@@ -512,7 +551,8 @@ export default function ModerationPage() {
           ...prev,
           items: prev.items.map((item) =>
             item.id === caseInbox.selectedCaseId ? { ...item, status: nextStatus } : item
-          )
+          ),
+          selectedCaseGuildId: guildId
         }))
         setCaseMenuOpen(false)
         loadCases()
@@ -525,7 +565,7 @@ export default function ModerationPage() {
         }))
       }
     },
-    [authenticated, caseInbox.selectedCaseId, loadCases, refreshAuth]
+    [authenticated, caseInbox.selectedCaseGuildId, caseInbox.selectedCaseId, loadCases, refreshAuth, selectedGuild?.id]
   )
 
   const performMemberLookup = useCallback(

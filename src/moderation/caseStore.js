@@ -66,13 +66,14 @@ export async function recordCase(entry) {
     data.updatedAt = now
   }
 
-  updateUserTotals(data, caseEntry, statsKey, now)
+  const totals = updateUserTotals(data, caseEntry, statsKey, now)
   sortCases(data)
   await persistData(data)
 
   return {
     entry: caseEntry,
-    action: actionRecord
+    action: actionRecord,
+    totals
   }
 }
 
@@ -380,13 +381,19 @@ function createMessage({ authorType, authorId, authorTag, body, via }) {
 
 function updateUserTotals(data, caseEntry, statsKey, now) {
   const key = getTotalsKey(caseEntry.guildId, caseEntry.userId)
-  const totals = data.userTotals[key] ?? defaultTotals()
-  totals.cases = (totals.cases ?? 0) + 1
-  if (statsKey && statsKey in totals) {
-    totals[statsKey] = (totals[statsKey] ?? 0) + 1
+  const previous = data.userTotals[key] ?? defaultTotals()
+  const totals = {
+    ...previous,
+    cases: (previous.cases ?? 0) + 1,
+    lastActionAt: now
   }
-  totals.lastActionAt = now
+
+  if (statsKey && statsKey in totals) {
+    totals[statsKey] = (previous[statsKey] ?? 0) + 1
+  }
+
   data.userTotals[key] = totals
+  return { ...totals }
 }
 
 function findCase(data, guildId, caseId) {

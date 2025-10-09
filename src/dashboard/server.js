@@ -604,6 +604,94 @@ export function createDashboard(client, moderation) {
     }
   });
 
+  api.get('/moderation/cases/:caseId', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+
+    try {
+      const caseEntry = await moderation.getCase(req.params.caseId);
+      if (!caseEntry) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      const details = await moderation.getCaseDetails(caseEntry.guildId, caseEntry.id);
+      if (!details) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      res.json(details);
+    } catch (error) {
+      console.error('Failed to load moderation case:', error);
+      res.status(500).json({ error: 'Could not load moderation case.' });
+    }
+  });
+
+  api.post('/moderation/cases/:caseId/messages', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const caseEntry = await moderation.getCase(req.params.caseId);
+      if (!caseEntry) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      const message = await moderation.postModeratorMessage({
+        guildId: caseEntry.guildId,
+        caseId: caseEntry.id,
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null,
+        body: req.body?.body ?? req.body?.content ?? ''
+      });
+
+      const details = await moderation.getCaseDetails(caseEntry.guildId, caseEntry.id);
+      res.json({ message, case: details });
+    } catch (error) {
+      console.error('Failed to post moderator message:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to send message.' });
+    }
+  });
+
+  api.post('/moderation/cases/:caseId/status', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const caseEntry = await moderation.getCase(req.params.caseId);
+      if (!caseEntry) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      const updated = await moderation.setCaseStatus({
+        guildId: caseEntry.guildId,
+        caseId: caseEntry.id,
+        status: String(req.body?.status ?? 'open'),
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null,
+        note: req.body?.note ?? null
+      });
+
+      res.json(updated);
+    } catch (error) {
+      console.error('Failed to update case status:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to update case status.' });
+    }
+  });
+
   api.put('/moderation', async (req, res) => {
     try {
       const updated = await saveModerationConfig(req.body ?? {});
