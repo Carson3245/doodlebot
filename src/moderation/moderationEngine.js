@@ -624,8 +624,25 @@ export class ModerationEngine {
       return null
     }
 
-    const caseEntry = await findActiveCaseForMember(user.id)
+    let caseEntry = await findActiveCaseForMember(user.id)
     if (!caseEntry) {
+      const mutualGuilds = await this.findMemberGuilds(user.id)
+      for (const { guild, member } of mutualGuilds) {
+        caseEntry = await ensureMemberCase({
+          guildId: guild.id,
+          guildName: guild.name ?? null,
+          userId: user.id,
+          userTag: resolveUserTag(user),
+          initialMessage: finalBody
+        })
+        const message = caseEntry.messages?.[caseEntry.messages.length - 1] ?? null
+        await this.notifyStaffOfMemberMessage({
+          guildId: guild.id,
+          memberDisplay: member?.toString?.() ?? resolveUserTag(user) ?? user.id,
+          caseEntry
+        })
+        return { caseEntry, message }
+      }
       return null
     }
 
@@ -819,6 +836,37 @@ export class ModerationEngine {
     }
 
     return channel
+  }
+
+  async findMemberGuilds(userId) {
+    if (!userId) {
+      return []
+    }
+
+    let guildCollection = this.client.guilds?.cache ?? null
+    if (!guildCollection || guildCollection.size === 0) {
+      const fetched = await this.client.guilds?.fetch?.().catch(() => null)
+      if (fetched) {
+        guildCollection = fetched
+      }
+    }
+
+    if (!guildCollection) {
+      return []
+    }
+
+    const results = []
+    for (const guild of guildCollection.values()) {
+      if (!guild?.members?.fetch) {
+        continue
+      }
+      const member = await guild.members.fetch(userId).catch(() => null)
+      if (member) {
+        results.push({ guild, member })
+      }
+    }
+
+    return results
   }
 
   colorForAction(action) {
