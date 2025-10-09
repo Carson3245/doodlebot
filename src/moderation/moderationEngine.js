@@ -378,7 +378,7 @@ export class ModerationEngine {
       throw error
     }
 
-    const { entry, action, totals } = await recordCase({
+    const { entry, action: actionRecord, totals } = await recordCase({
       guildId: guild.id,
       guildName: guild.name ?? null,
       userId,
@@ -392,7 +392,7 @@ export class ModerationEngine {
       metadata: metadata ?? null
     })
 
-    await this.notifyLog(guild, entry, action)
+    await this.notifyLog(guild, entry, actionRecord)
 
     await this.evaluateEscalation(guild, member, entry, totals)
   }
