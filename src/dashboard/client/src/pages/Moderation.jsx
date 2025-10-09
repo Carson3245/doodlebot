@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useGuild } from '../guild.jsx'
-import { useAuth } from '../auth.jsx'
+import { useGuild } from '../guildContext.js'
+import { useAuth } from '../authContext.js'
 import { formatDateTime } from '../utils.js'
 
 const FILTER_DETAILS = {
@@ -53,6 +53,7 @@ export default function ModerationPage() {
     warn: { results: [], loading: false }
   })
   const lookupTimers = useRef({})
+  const caseMenuRef = useRef(null)
   const [quickActionTargets, setQuickActionTargets] = useState({
     ban: null,
     timeout: null,
@@ -67,11 +68,31 @@ export default function ModerationPage() {
     updatedAt: null,
     error: null
   })
-  const [recentCases, setRecentCases] = useState({
+  const [caseInbox, setCaseInbox] = useState({
     loading: true,
     items: [],
-    error: null
+    error: null,
+    selectedCaseId: null
   })
+  const [caseDetail, setCaseDetail] = useState({
+    loading: false,
+    messages: [],
+    participants: [],
+    subject: '',
+    status: null,
+    openedAt: null,
+    openedBy: null,
+    error: null,
+    sending: false,
+    statusUpdating: false,
+    unreadCount: 0
+  })
+  const [caseReply, setCaseReply] = useState('')
+  const [caseMenuOpen, setCaseMenuOpen] = useState(false)
+  const openCaseCount = useMemo(
+    () => caseInbox.items.filter((item) => (item.status || '').toLowerCase() !== 'closed').length,
+    [caseInbox.items]
+  )
   const [config, setConfig] = useState(null)
   const [keywordsInput, setKeywordsInput] = useState('')
   const [feedback, setFeedback] = useState('')
@@ -150,16 +171,31 @@ export default function ModerationPage() {
 
   const loadCases = useCallback(async () => {
     if (!authenticated) {
-      setRecentCases({
+      setCaseInbox({
         loading: false,
         items: [],
-        error: null
+        error: null,
+        selectedCaseId: null
       })
+      setCaseDetail({
+        loading: false,
+        messages: [],
+        participants: [],
+        subject: '',
+        status: null,
+        openedAt: null,
+        openedBy: null,
+        error: null,
+        sending: false,
+        statusUpdating: false,
+        unreadCount: 0
+      })
+      setCaseReply('')
       return
     }
 
     try {
-      setRecentCases((prev) => ({ ...prev, loading: true, error: null }))
+      setCaseInbox((prev) => ({ ...prev, loading: true, error: null }))
       const response = await fetch('/api/moderation/cases')
       if (response.status === 401) {
         refreshAuth()
@@ -169,17 +205,22 @@ export default function ModerationPage() {
         throw new Error('Failed to load moderation cases')
       }
       const data = await response.json()
-      setRecentCases({
-        loading: false,
-        items: Array.isArray(data) ? data : [],
-        error: null
+      setCaseInbox((prev) => {
+        const items = Array.isArray(data) ? data : []
+        const hasCurrent = prev.selectedCaseId && items.some((item) => item.id === prev.selectedCaseId)
+        return {
+          loading: false,
+          items,
+          error: null,
+          selectedCaseId: hasCurrent ? prev.selectedCaseId : items[0]?.id ?? null
+        }
       })
     } catch (error) {
       console.error('Failed to load moderation cases', error)
-      setRecentCases((prev) => ({
+      setCaseInbox((prev) => ({
         ...prev,
         loading: false,
-        error: 'Unable to load recent moderation cases.'
+        error: 'Unable to load moderation cases.'
       }))
     }
   }, [authenticated, refreshAuth])
@@ -207,6 +248,71 @@ export default function ModerationPage() {
     }
   }, [authenticated, refreshAuth])
 
+  const loadCaseDetail = useCallback(
+    async (caseId) => {
+      if (!caseId || !authenticated) {
+        setCaseDetail({
+          loading: false,
+          messages: [],
+          participants: [],
+          subject: '',
+          status: null,
+          openedAt: null,
+          openedBy: null,
+          error: null,
+          sending: false,
+          statusUpdating: false,
+          unreadCount: 0
+        })
+        setCaseReply('')
+        return
+      }
+
+      try {
+        setCaseDetail((prev) => ({ ...prev, loading: true, error: null }))
+        const response = await fetch(`/api/moderation/cases/${caseId}`)
+        if (response.status === 401) {
+          refreshAuth()
+          return
+        }
+        if (!response.ok) {
+          throw new Error('Failed to load case details')
+        }
+        const data = await response.json()
+        setCaseDetail({
+          loading: false,
+          messages: Array.isArray(data?.messages) ? data.messages : [],
+          participants: Array.isArray(data?.participants) ? data.participants : [],
+          subject: data?.subject ?? '',
+          status: data?.status ?? 'open',
+          openedAt: data?.openedAt ?? null,
+          openedBy: data?.openedBy ?? null,
+          error: null,
+          sending: false,
+          statusUpdating: false,
+          unreadCount: data?.unreadCount ?? 0
+        })
+        setCaseReply('')
+        setCaseInbox((prev) => ({
+          ...prev,
+          items: prev.items.map((item) =>
+            item.id === caseId ? { ...item, unreadCount: 0, status: data?.status ?? item.status } : item
+          )
+        }))
+      } catch (error) {
+        console.error('Failed to load case detail', error)
+        setCaseDetail((prev) => ({
+          ...prev,
+          loading: false,
+          sending: false,
+          statusUpdating: false,
+          error: 'Unable to load the selected case.'
+        }))
+      }
+    },
+    [authenticated, refreshAuth]
+  )
+
   useEffect(() => {
     loadStats()
   }, [loadStats])
@@ -218,6 +324,36 @@ export default function ModerationPage() {
   useEffect(() => {
     loadGuilds()
   }, [loadGuilds])
+
+  useEffect(() => {
+    if (caseInbox.selectedCaseId) {
+      loadCaseDetail(caseInbox.selectedCaseId)
+    } else {
+      loadCaseDetail(null)
+    }
+  }, [caseInbox.selectedCaseId, loadCaseDetail])
+
+  useEffect(() => {
+    const handleClickAway = (event) => {
+      if (!caseMenuRef.current) return
+      if (!caseMenuRef.current.contains(event.target)) {
+        setCaseMenuOpen(false)
+      }
+    }
+
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        setCaseMenuOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickAway)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleClickAway)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [])
 
   useEffect(() => {
     if (!authenticated) {
@@ -269,6 +405,128 @@ export default function ModerationPage() {
       }
     }))
   }, [])
+
+  const handleSelectCase = useCallback((caseId) => {
+    setCaseInbox((prev) => ({
+      ...prev,
+      selectedCaseId: caseId
+    }))
+    setCaseMenuOpen(false)
+  }, [])
+
+  const handleSendCaseMessage = useCallback(
+    async (event) => {
+      event.preventDefault()
+      if (!caseInbox.selectedCaseId) {
+        return
+      }
+      const trimmed = caseReply.trim()
+      if (!trimmed) {
+        return
+      }
+      if (!authenticated) {
+        setCaseDetail((prev) => ({
+          ...prev,
+          error: 'Please log in with a moderator account to reply.'
+        }))
+        return
+      }
+
+      setCaseDetail((prev) => ({ ...prev, sending: true, error: null }))
+      try {
+        const response = await fetch(`/api/moderation/cases/${caseInbox.selectedCaseId}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: trimmed })
+        })
+        if (response.status === 401) {
+          refreshAuth()
+          setCaseDetail((prev) => ({
+            ...prev,
+            sending: false,
+            error: 'Session expired. Log in again.'
+          }))
+          return
+        }
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}))
+          throw new Error(data?.error || 'Unable to send message.')
+        }
+        setCaseReply('')
+        await loadCaseDetail(caseInbox.selectedCaseId)
+      } catch (error) {
+        console.error('Failed to send case reply', error)
+        setCaseDetail((prev) => ({
+          ...prev,
+          sending: false,
+          error: error?.message ?? 'Failed to send message.'
+        }))
+        return
+      }
+      setCaseDetail((prev) => ({ ...prev, sending: false }))
+      loadCases()
+    },
+    [authenticated, caseInbox.selectedCaseId, caseReply, loadCaseDetail, loadCases, refreshAuth]
+  )
+
+  const handleUpdateCaseStatus = useCallback(
+    async (nextStatus) => {
+      if (!caseInbox.selectedCaseId) {
+        return
+      }
+      if (!authenticated) {
+        setCaseDetail((prev) => ({
+          ...prev,
+          error: 'Please log in with a moderator account to update the case status.'
+        }))
+        return
+      }
+
+      setCaseDetail((prev) => ({ ...prev, statusUpdating: true, error: null }))
+      try {
+        const response = await fetch(`/api/moderation/cases/${caseInbox.selectedCaseId}/status`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: nextStatus })
+        })
+        if (response.status === 401) {
+          refreshAuth()
+          setCaseDetail((prev) => ({
+            ...prev,
+            statusUpdating: false,
+            error: 'Session expired. Log in again.'
+          }))
+          return
+        }
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}))
+          throw new Error(data?.error || 'Unable to update case status.')
+        }
+        setCaseDetail((prev) => ({
+          ...prev,
+          status: nextStatus,
+          statusUpdating: false,
+          error: null
+        }))
+        setCaseInbox((prev) => ({
+          ...prev,
+          items: prev.items.map((item) =>
+            item.id === caseInbox.selectedCaseId ? { ...item, status: nextStatus } : item
+          )
+        }))
+        setCaseMenuOpen(false)
+        loadCases()
+      } catch (error) {
+        console.error('Failed to update case status', error)
+        setCaseDetail((prev) => ({
+          ...prev,
+          statusUpdating: false,
+          error: error?.message ?? 'Failed to update status.'
+        }))
+      }
+    },
+    [authenticated, caseInbox.selectedCaseId, loadCases, refreshAuth]
+  )
 
   const performMemberLookup = useCallback(
     async (action, query) => {
@@ -1027,39 +1285,224 @@ const submitQuickAction = useCallback(
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel case-hub">
         <header className="panel__header">
           <div>
-            <h2>Recent moderation cases</h2>
-            <p>Automatic and manual actions recorded by the bot.</p>
+            <h2>Case inbox</h2>
+            <p>Converse com membros anonimamente, organize ações e finalize casos.</p>
+          </div>
+          <div className="case-hub__toolbar">
+            <span className="panel__meta">
+              {caseInbox.loading
+                ? 'Atualizando casos...'
+                : `${openCaseCount} ${openCaseCount === 1 ? 'caso aberto' : 'casos abertos'}`}
+            </span>
+            <button
+              type="button"
+              className="button button--ghost"
+              onClick={loadCases}
+              disabled={caseInbox.loading}
+            >
+              Atualizar
+            </button>
           </div>
         </header>
-        <div className="panel__body">
-          {recentCases.loading ? (
-            <p className="placeholder">Loading recent cases...</p>
-          ) : recentCases.error ? (
-            <p className="placeholder">{recentCases.error}</p>
-          ) : recentCases.items.length === 0 ? (
-            <p className="placeholder">No cases logged yet.</p>
-          ) : (
-            <ul className="simple-list simple-list--rows">
-              {recentCases.items.slice(0, 10).map((item) => (
-                <li key={item.id} className="moderation-case">
-                  <div className="list-row">
-                    <strong>{capitalize(item.action)}</strong>
-                    <span className="list-meta">{formatDateTime(item.createdAt)}</span>
+        <div className="panel__body case-hub__body">
+          <aside className="case-hub__list" aria-label="Fila de casos">
+            {caseInbox.loading ? (
+              <p className="placeholder">Carregando casos...</p>
+            ) : caseInbox.error ? (
+              <p className="placeholder">{caseInbox.error}</p>
+            ) : caseInbox.items.length === 0 ? (
+              <p className="placeholder">Nenhum caso aberto. Os membros podem iniciar uma conversa pelo bot.</p>
+            ) : (
+              <ul className="case-hub__items">
+                {caseInbox.items.map((item) => {
+                  const isActive = item.id === caseInbox.selectedCaseId
+                  const participant =
+                    item.memberTag || item.userTag || item.memberName || item.userName || item.userId
+                  const lastUpdate = item.updatedAt || item.createdAt
+                  return (
+                    <li key={item.id}>
+                      <button
+                        type="button"
+                        className={`case-card${isActive ? ' case-card--active' : ''}`}
+                        onClick={() => handleSelectCase(item.id)}
+                      >
+                        <span className="case-card__title">{item.subject || item.reason || `Caso ${item.id}`}</span>
+                        <span className="case-card__participant">{participant || 'Membro desconhecido'}</span>
+                        <div className="case-card__footer">
+                          <span className={`case-status case-status--${(item.status || 'open').toLowerCase()}`}>
+                            {formatCaseStatus(item.status)}
+                          </span>
+                          {item.unreadCount > 0 && (
+                            <span className="case-card__badge" aria-label={`${item.unreadCount} novas mensagens`}>
+                              {item.unreadCount}
+                            </span>
+                          )}
+                          {lastUpdate && (
+                            <span className="case-card__time">{formatDateTime(lastUpdate)}</span>
+                          )}
+                        </div>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </aside>
+          <div className="case-hub__conversation">
+            {!caseInbox.selectedCaseId ? (
+              <div className="case-hub__placeholder">
+                <h3>Selecione um caso</h3>
+                <p>Escolha um caso na lista para visualizar o histórico, enviar mensagens e aplicar ações rápidas.</p>
+              </div>
+            ) : (
+              <div className="case-hub__conversation-wrapper">
+                <header className="case-hub__conversation-header">
+                  <div>
+                    <h3>{caseDetail.subject || 'Conversa com membro'}</h3>
+                    <p>
+                      {caseDetail.openedBy
+                        ? `Aberto por ${caseDetail.openedBy.tag || caseDetail.openedBy.displayName || caseDetail.openedBy.id}`
+                        : 'Aguardando dados do caso'}
+                      {caseDetail.openedAt ? ` • ${formatDateTime(caseDetail.openedAt)}` : ''}
+                    </p>
+                    {caseDetail.participants.length > 0 && (
+                      <p className="case-hub__participants">
+                        Participantes:{' '}
+                        {caseDetail.participants
+                          .map((participant) =>
+                            participant.displayName ||
+                            participant.username ||
+                            participant.tag ||
+                            participant.id
+                          )
+                          .join(', ')}
+                      </p>
+                    )}
                   </div>
-                  <p className="list-subtext">
-                    User: {item.userTag ? `${item.userTag} (${item.userId})` : item.userId}
-                  </p>
-                  {item.reason && <p className="list-subtext">Reason: {item.reason}</p>}
-                  {item.durationMinutes ? (
-                    <p className="list-subtext">Duration: {item.durationMinutes} minutes</p>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
+                  <div className="case-hub__conversation-tools" ref={caseMenuRef}>
+                    <span className={`case-status case-status--${(caseDetail.status || 'open').toLowerCase()}`}>
+                      {formatCaseStatus(caseDetail.status)}
+                    </span>
+                    <button
+                      type="button"
+                      className="button button--ghost case-hub__menu-trigger"
+                      onClick={() => setCaseMenuOpen((prev) => !prev)}
+                      aria-haspopup="true"
+                      aria-expanded={caseMenuOpen}
+                    >
+                      ⋮
+                    </button>
+                    {caseMenuOpen && (
+                      <ul className="case-hub__menu" role="menu">
+                        <li role="none">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => handleUpdateCaseStatus('open')}
+                            disabled={caseDetail.statusUpdating}
+                          >
+                            Abrir caso
+                          </button>
+                        </li>
+                        <li role="none">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => handleUpdateCaseStatus('pending-response')}
+                            disabled={caseDetail.statusUpdating}
+                          >
+                            Marcar como aguardando resposta
+                          </button>
+                        </li>
+                        <li role="none">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => handleUpdateCaseStatus('closed')}
+                            disabled={caseDetail.statusUpdating}
+                          >
+                            Fechar caso
+                          </button>
+                        </li>
+                      </ul>
+                    )}
+                  </div>
+                </header>
+
+                <div className="case-hub__conversation-body" aria-live="polite">
+                  {caseDetail.loading ? (
+                    <p className="placeholder">Carregando mensagens...</p>
+                  ) : caseDetail.messages.length === 0 ? (
+                    <p className="placeholder">Nenhuma mensagem registrada neste caso ainda.</p>
+                  ) : (
+                    <ul className="case-messages">
+                      {caseDetail.messages.map((message, index) => {
+                        const role = (message.role || message.authorRole || 'member').toLowerCase()
+                        const key = message.id || `${message.createdAt || index}-${index}`
+                        const authorLabel =
+                          message.authorTag ||
+                          message.author ||
+                          message.authorName ||
+                          message.username ||
+                          (role === 'moderator' ? 'Equipe de moderação' : 'Membro')
+                        return (
+                          <li key={key} className={`case-message case-message--${role}`}>
+                            <header className="case-message__meta">
+                              <strong>{authorLabel}</strong>
+                              {message.createdAt && (
+                                <span>{formatDateTime(message.createdAt)}</span>
+                              )}
+                            </header>
+                            <p className="case-message__content">{message.content ?? ''}</p>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </div>
+
+                <form className="case-composer" onSubmit={handleSendCaseMessage}>
+                  <label className="visually-hidden" htmlFor="case-reply">
+                    Responder ao membro
+                  </label>
+                  <textarea
+                    id="case-reply"
+                    placeholder={
+                      (caseDetail.status || '').toLowerCase() === 'closed'
+                        ? 'O caso está encerrado. Reabra para responder.'
+                        : 'Digite uma resposta para o membro...'
+                    }
+                    value={caseReply}
+                    onChange={(event) => setCaseReply(event.target.value)}
+                    disabled={
+                      !authenticated ||
+                      caseDetail.sending ||
+                      (caseDetail.status || '').toLowerCase() === 'closed'
+                    }
+                    rows={4}
+                  />
+                  <div className="case-composer__footer">
+                    {caseDetail.error && <p className="form-helper form-helper--error">{caseDetail.error}</p>}
+                    <button
+                      type="submit"
+                      className="button button--primary"
+                      disabled={
+                        !authenticated ||
+                        caseDetail.sending ||
+                        !caseInbox.selectedCaseId ||
+                        (caseDetail.status || '').toLowerCase() === 'closed'
+                      }
+                    >
+                      {caseDetail.sending ? 'Enviando...' : 'Enviar mensagem'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+          </div>
         </div>
       </section>
 
@@ -1333,7 +1776,17 @@ const submitQuickAction = useCallback(
   )
 }
 
-function capitalize(text) {
-  if (!text) return ''
-  return text.charAt(0).toUpperCase() + text.slice(1)
+function formatCaseStatus(status) {
+  const value = (status || 'open').toLowerCase()
+  switch (value) {
+    case 'pending-response':
+      return 'Aguardando resposta'
+    case 'closed':
+      return 'Fechado'
+    case 'escalated':
+      return 'Escalonado'
+    case 'open':
+    default:
+      return 'Aberto'
+  }
 }
