@@ -10,6 +10,7 @@ import {
   getModerationStats,
   getRecentCases,
   ensureMemberCase,
+  findActiveCaseForMember,
   appendCaseMessage,
   updateCaseStatus,
   listCases,
@@ -588,19 +589,61 @@ export class ModerationEngine {
       via: 'member'
     })
 
-    const alerts = this.config.alerts ?? {}
-    if (alerts.notifyOnAutoAction && alerts.staffRoleId) {
-      const logGuild = await this.client.guilds.fetch(guild.id).catch(() => null)
-      const channel = logGuild ? await this.getLogChannel(logGuild, alerts.logChannelId) : null
-      if (channel && channel.isTextBased()) {
-        const mention = `<@&${alerts.staffRoleId}>`
-        await channel
-          .send(
-            `${mention} New support message from ${member} in ${guild.name}. Open case ${caseEntry.id} in the dashboard.`
-          )
-          .catch(() => {})
-      }
+    await this.notifyStaffOfMemberMessage({
+      guildId: guild.id,
+      memberDisplay: member?.toString?.() ?? member?.user?.tag ?? null,
+      caseEntry
+    })
+
+    return { caseEntry, message }
+  }
+
+  async routeMemberDirectMessage({ user, body, attachments = [] }) {
+    await this.init()
+    if (!user) {
+      return null
     }
+
+    const baseContent = typeof body === 'string' ? body : ''
+    const trimmed = baseContent.trim()
+    const attachmentLines = (Array.isArray(attachments) ? attachments : [])
+      .map((attachment) => {
+        const url = attachment?.url ?? attachment?.proxyURL ?? attachment?.attachment ?? null
+        return url ? `Attachment: ${url}` : null
+      })
+      .filter(Boolean)
+
+    let combined = trimmed
+    if (attachmentLines.length) {
+      const attachmentText = attachmentLines.join('\n')
+      combined = combined.length ? `${combined}\n\n${attachmentText}` : attachmentText
+    }
+
+    const finalBody = combined.trim()
+    if (!finalBody.length) {
+      return null
+    }
+
+    const caseEntry = await findActiveCaseForMember(user.id)
+    if (!caseEntry) {
+      return null
+    }
+
+    const message = await appendCaseMessage({
+      guildId: caseEntry.guildId,
+      caseId: caseEntry.id,
+      authorType: 'member',
+      authorId: user.id,
+      authorTag: resolveUserTag(user),
+      body: finalBody,
+      via: 'dm'
+    })
+
+    await this.notifyStaffOfMemberMessage({
+      guildId: caseEntry.guildId,
+      memberDisplay: user?.toString?.() ?? resolveUserTag(user) ?? user.id,
+      caseEntry
+    })
 
     return { caseEntry, message }
   }
@@ -722,6 +765,41 @@ export class ModerationEngine {
     }
   }
 
+  async notifyStaffOfMemberMessage({ guildId, memberDisplay, caseEntry }) {
+    const alerts = this.config.alerts ?? {}
+    if (!alerts.notifyOnAutoAction || !alerts.staffRoleId || !alerts.logChannelId) {
+      return
+    }
+
+    const logGuild = await this.client.guilds.fetch(guildId).catch(() => null)
+    if (!logGuild) {
+      return
+    }
+
+    const channel = await this.getLogChannel(logGuild, alerts.logChannelId)
+    if (!channel || !channel.isTextBased()) {
+      return
+    }
+
+    const mention = `<@&${alerts.staffRoleId}>`
+    const display =
+      typeof memberDisplay === 'string' && memberDisplay.trim().length
+        ? memberDisplay.trim()
+        : caseEntry?.userTag
+          ? caseEntry.userTag
+          : caseEntry?.userId
+            ? `<@${caseEntry.userId}>`
+            : 'a member'
+    const guildName = logGuild.name ?? 'the server'
+    const caseId = caseEntry?.id ?? 'unknown'
+
+    await channel
+      .send(
+        `${mention} New support message from ${display} in ${guildName}. Open case ${caseId} in the dashboard.`
+      )
+      .catch(() => {})
+  }
+
   async getLogChannel(guild, channelId) {
     if (!channelId) {
       return null
@@ -774,6 +852,21 @@ export class ModerationEngine {
 
     await member.user.send(message).catch(() => {})
   }
+}
+
+function resolveUserTag(user) {
+  if (!user) {
+    return null
+  }
+  if (typeof user.tag === 'string' && user.tag.length) {
+    return user.tag
+  }
+  const username = user.username ?? null
+  if (!username) {
+    return null
+  }
+  const discriminator = user.discriminator && user.discriminator !== '0' ? `#${user.discriminator}` : ''
+  return `${username}${discriminator}`
 }
 
 function defaultTemplateFor(action) {

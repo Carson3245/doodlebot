@@ -207,6 +207,30 @@ export async function ensureMemberCase({
   return newCase
 }
 
+export async function findActiveCaseForMember(userId) {
+  if (!userId) {
+    return null
+  }
+
+  const data = await loadData()
+  const key = String(userId)
+  const candidates = data.cases
+    .filter((entry) => entry.userId === key)
+    .sort((left, right) => {
+      const leftTimestamp = left.lastMessageAt ?? left.updatedAt ?? left.createdAt ?? ''
+      const rightTimestamp = right.lastMessageAt ?? right.updatedAt ?? right.createdAt ?? ''
+      return rightTimestamp.localeCompare(leftTimestamp)
+    })
+
+  if (!candidates.length) {
+    return null
+  }
+
+  const active = candidates.find((entry) => (entry.status ?? DEFAULT_STATUS) !== 'closed')
+  const selected = active ?? candidates[0]
+  return { ...selected }
+}
+
 export async function appendCaseMessage({
   guildId,
   caseId,

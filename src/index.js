@@ -90,6 +90,22 @@ async function bootstrap() {
 
     const content = message.content ?? '';
 
+    if (!message.guild) {
+      try {
+        const attachments = Array.from(message.attachments?.values?.() ?? []);
+        const routed = await moderation.routeMemberDirectMessage({
+          user: message.author,
+          body: content,
+          attachments,
+        });
+        if (routed) {
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to route member DM reply:', error);
+      }
+    }
+
     if (content.startsWith(prefix)) {
       const trimmed = content.slice(prefix.length).trim().toLowerCase();
 
