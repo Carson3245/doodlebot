@@ -104,65 +104,6 @@ export default function ModerationPage() {
   const [guildOptions, setGuildOptions] = useState([])
   const [quickActions, setQuickActions] = useState(() => createQuickActionState())
 
-  const handleRealtimeEvent = useCallback(
-    (event) => {
-      if (!authenticated) {
-        return
-      }
-      if (!event || typeof event !== 'object') {
-        return
-      }
-      const { type, payload } = event
-      if (!type) {
-        return
-      }
-      if (type === 'connected') {
-        return
-      }
-      if (type === 'stats:updated') {
-        if (payload && typeof payload === 'object') {
-          setStats({
-            loading: false,
-            bans: payload.bans ?? 0,
-            timeouts: payload.timeouts ?? 0,
-            warnings: payload.warnings ?? 0,
-            cases: payload.cases ?? 0,
-            updatedAt: payload.updatedAt ?? null,
-            error: null
-          })
-        } else {
-          loadStats()
-        }
-        return
-      }
-
-      if (
-        type === 'case:message' ||
-        type === 'cases:updated' ||
-        type === 'case:status' ||
-        type === 'case:created'
-      ) {
-        loadCases()
-        const targetCaseId = payload?.caseId ?? payload?.id ?? null
-        if (targetCaseId && caseInbox.selectedCaseId === targetCaseId) {
-          const guildId =
-            payload?.guildId ?? caseInbox.selectedCaseGuildId ?? selectedGuild?.id ?? null
-          if (guildId) {
-            loadCaseDetail(targetCaseId, guildId)
-          }
-        }
-      }
-    },
-    [
-      authenticated,
-      caseInbox.selectedCaseId,
-      caseInbox.selectedCaseGuildId,
-      loadCaseDetail,
-      loadCases,
-      loadStats,
-      selectedGuild?.id
-    ]
-  )
   useEffect(() => {
     Object.values(lookupTimers.current).forEach((timer) => clearTimeout(timer))
     lookupTimers.current = {}
@@ -382,6 +323,66 @@ export default function ModerationPage() {
       }
     },
     [authenticated, refreshAuth]
+  )
+
+  const handleRealtimeEvent = useCallback(
+    (event) => {
+      if (!authenticated) {
+        return
+      }
+      if (!event || typeof event !== 'object') {
+        return
+      }
+      const { type, payload } = event
+      if (!type) {
+        return
+      }
+      if (type === 'connected') {
+        return
+      }
+      if (type === 'stats:updated') {
+        if (payload && typeof payload === 'object') {
+          setStats({
+            loading: false,
+            bans: payload.bans ?? 0,
+            timeouts: payload.timeouts ?? 0,
+            warnings: payload.warnings ?? 0,
+            cases: payload.cases ?? 0,
+            updatedAt: payload.updatedAt ?? null,
+            error: null
+          })
+        } else {
+          loadStats()
+        }
+        return
+      }
+
+      if (
+        type === 'case:message' ||
+        type === 'cases:updated' ||
+        type === 'case:status' ||
+        type === 'case:created'
+      ) {
+        loadCases()
+        const targetCaseId = payload?.caseId ?? payload?.id ?? null
+        if (targetCaseId && caseInbox.selectedCaseId === targetCaseId) {
+          const guildId =
+            payload?.guildId ?? caseInbox.selectedCaseGuildId ?? selectedGuild?.id ?? null
+          if (guildId) {
+            loadCaseDetail(targetCaseId, guildId)
+          }
+        }
+      }
+    },
+    [
+      authenticated,
+      caseInbox.selectedCaseId,
+      caseInbox.selectedCaseGuildId,
+      loadCaseDetail,
+      loadCases,
+      loadStats,
+      selectedGuild?.id
+    ]
   )
 
   useEffect(() => {
