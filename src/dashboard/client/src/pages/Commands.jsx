@@ -111,7 +111,7 @@ export default function CommandsPage() {
   }
 
   return (
-    <>
+    <div className="page commands-page">
       <section className="panel">
         <header className="panel__header">
           <div>
@@ -188,7 +188,7 @@ export default function CommandsPage() {
           </ul>
         </div>
       </section>
-    </>
+    </div>
   )
 }
 

@@ -1,6 +1,6 @@
 export default function LogsPage() {
   return (
-    <>
+    <div className="page logs-page">
       <section className="panel">
         <header className="panel__header">
           <div>
@@ -26,6 +26,6 @@ export default function LogsPage() {
           </div>
         </header>
       </section>
-    </>
+    </div>
   )
 }

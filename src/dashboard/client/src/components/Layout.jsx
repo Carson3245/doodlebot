@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../auth.jsx'
+import { useGuild } from '../guild.jsx'
 import logoSrc from '../assets/logo.svg'
 
 const NAV_ITEMS = [
@@ -17,7 +18,93 @@ const INSIGHT_ITEMS = NAV_ITEMS.slice(4)
 export function AppLayout() {
   const location = useLocation()
   const { authenticated } = useAuth()
+  const { selectedGuild } = useGuild()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const navRef = useRef(null)
+  const linkRegistry = useRef(new Map())
+  const [indicatorStyle, setIndicatorStyle] = useState({ opacity: 0 })
+
+  const updateIndicator = useCallback(() => {
+    const navEl = navRef.current
+    if (!navEl) {
+      setIndicatorStyle((prev) => ({ ...prev, opacity: 0 }))
+      return
+    }
+
+    const entries = Array.from(linkRegistry.current.entries())
+    if (entries.length === 0) {
+      setIndicatorStyle((prev) => ({ ...prev, opacity: 0 }))
+      return
+    }
+
+    let activePath = location.pathname
+    if (!linkRegistry.current.has(activePath)) {
+      const fallback = entries
+        .filter(([path]) => path !== '/' && activePath.startsWith(path))
+        .sort((a, b) => b[0].length - a[0].length)[0]
+      activePath = fallback ? fallback[0] : '/'
+    }
+
+    const activeNode = linkRegistry.current.get(activePath)
+    if (!activeNode) {
+      setIndicatorStyle((prev) => ({ ...prev, opacity: 0 }))
+      return
+    }
+
+    const navRect = navEl.getBoundingClientRect()
+    const linkRect = activeNode.getBoundingClientRect()
+    const offsetY = linkRect.top - navRect.top + navEl.scrollTop
+    const offsetX = linkRect.left - navRect.left + navEl.scrollLeft
+
+    setIndicatorStyle({
+      height: `${linkRect.height}px`,
+      width: `${linkRect.width}px`,
+      transform: `translate(${offsetX}px, ${offsetY}px)`,
+      opacity: 1
+    })
+  }, [location.pathname])
+
+  const scheduleIndicator = useCallback(() => {
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => {
+        updateIndicator()
+      })
+    } else {
+      updateIndicator()
+    }
+  }, [updateIndicator])
+
+  const registerLink = useCallback(
+    (path, node) => {
+      if (!path) {
+        return
+      }
+
+      if (node) {
+        linkRegistry.current.set(path, node)
+      } else {
+        linkRegistry.current.delete(path)
+      }
+
+      scheduleIndicator()
+    },
+    [scheduleIndicator]
+  )
+
+  useLayoutEffect(() => {
+    updateIndicator()
+  }, [updateIndicator])
+
+  useEffect(() => {
+    const handleResize = () => {
+      updateIndicator()
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [updateIndicator])
 
   useEffect(() => {
     setSidebarOpen(false)
@@ -27,37 +114,36 @@ export function AppLayout() {
     document.body.classList.toggle('auth-locked', !authenticated)
   }, [authenticated])
 
+  useEffect(() => {
+    if (sidebarOpen) {
+      scheduleIndicator()
+    }
+  }, [sidebarOpen, scheduleIndicator])
+
   return (
     <>
       <div className="app-shell">
         <aside className={`sidebar${sidebarOpen ? ' sidebar--open' : ''}`} data-navigation>
-          <SidebarBrand />
-          <nav className="sidebar__nav" aria-label="Primary">
-            <SidebarSection label="Overview">
-              <SidebarLink to="/" end>
-                Dashboard
-              </SidebarLink>
-            </SidebarSection>
-            <SidebarSection label="Config">
-              {PRIMARY_ITEMS.slice(1).map((item) => (
-                <SidebarLink key={item.to} to={item.to}>
-                  {item.label}
-                </SidebarLink>
-              ))}
-            </SidebarSection>
-            <SidebarSection label="Insights">
-              {INSIGHT_ITEMS.map((item) => (
-                <SidebarLink key={item.to} to={item.to}>
-                  {item.label}
-                </SidebarLink>
-              ))}
-            </SidebarSection>
+          <SidebarBrand guild={selectedGuild} />
+          <nav ref={navRef} className="sidebar__nav" aria-label="Primary">
+            <span className="sidebar__indicator" style={indicatorStyle} aria-hidden="true" />
+            <SidebarSection
+              label="Overview"
+              registerLink={registerLink}
+              items={PRIMARY_ITEMS.slice(0, 1)}
+              useEndProp
+            />
+            <SidebarSection label="Config" registerLink={registerLink} items={PRIMARY_ITEMS.slice(1)} />
+            <SidebarSection label="Insights" registerLink={registerLink} items={INSIGHT_ITEMS} />
           </nav>
           <SidebarFooter />
         </aside>
 
         <div className="main-area">
-          <Topbar onToggleSidebar={() => setSidebarOpen((prev) => !prev)} />
+          <Topbar
+            onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
+            guild={selectedGuild}
+          />
           <main className="content">
             <Outlet />
           </main>
@@ -68,30 +154,62 @@ export function AppLayout() {
   )
 }
 
-function SidebarBrand() {
+function SidebarBrand({ guild }) {
   return (
     <div className="sidebar__brand">
       <img src={logoSrc} alt="Planet Doodley logo" className="sidebar__logo" />
       <div>
         <p className="sidebar__title">Planet Doodle</p>
-        <p className="sidebar__subtitle">Control Center</p>
+        <p className="sidebar__subtitle">
+          {guild ? guild.name : 'Select a server'}
+        </p>
       </div>
     </div>
   )
 }
 
-function SidebarSection({ label, children }) {
+function SidebarSection({ label, items, registerLink, useEndProp = false }) {
+  const linkRef = useCallback(
+    (node, path) => {
+      registerLink?.(path ?? '/', node)
+    },
+    [registerLink]
+  )
+
   return (
     <div className="sidebar__group">
       <p className="sidebar__label">{label}</p>
-      {children}
+      {items.map((item) => (
+        <SidebarLink
+          key={item.to}
+          to={item.to}
+          registerLink={registerLink}
+          linkRef={linkRef}
+          useEndProp={useEndProp && item.to === '/'}
+        >
+          {item.label}
+        </SidebarLink>
+      ))}
     </div>
   )
 }
 
-function SidebarLink({ children, ...props }) {
+function SidebarLink({ children, to, registerLink, linkRef, useEndProp, ...props }) {
+  const combinedRef = useCallback(
+    (node) => {
+      linkRef?.(node, to)
+    },
+    [linkRef, to]
+  )
+
   return (
-    <NavLink {...props} className="sidebar__link">
+    <NavLink
+      {...props}
+      to={to}
+      end={useEndProp || undefined}
+      ref={combinedRef}
+      className="sidebar__link"
+    >
       {children}
     </NavLink>
   )
@@ -100,7 +218,7 @@ function SidebarLink({ children, ...props }) {
 function SidebarFooter() {
   return (
     <div className="sidebar__footer">
-      <p className="sidebar__version">v0.1 · Doodley</p>
+      <p className="sidebar__version">v0.1 - Doodley</p>
       <button className="sidebar__collapse" type="button" aria-label="Toggle navigation" disabled>
         <span />
         <span />
@@ -110,7 +228,7 @@ function SidebarFooter() {
   )
 }
 
-function Topbar({ onToggleSidebar }) {
+function Topbar({ onToggleSidebar, guild }) {
   const { authenticated, oauthEnabled, user, logout, loading } = useAuth()
 
   const displayName = useMemo(() => {
@@ -149,11 +267,16 @@ function Topbar({ onToggleSidebar }) {
         </button>
         <div>
           <h1 className="topbar__title">Control Center</h1>
-          <p className="topbar__subtitle">Manage Doodley for your community with confidence.</p>
+          <p className="topbar__subtitle">
+            {guild ? `Managing ${guild.name}` : 'Pick a server to start managing Doodley.'}
+          </p>
         </div>
       </div>
       <div className="topbar__right">
         <div className="topbar__auth">
+          <Link className="button button--ghost" to="/guilds">
+            Switch server
+          </Link>
           {authenticated ? (
             <div className="topbar__profile" data-auth-signed-in>
               <span className="topbar__avatar" data-auth-avatar style={avatar.style}>

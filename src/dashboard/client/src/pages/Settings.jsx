@@ -238,7 +238,7 @@ export default function SettingsPage() {
   }, [brain.recentVisitors])
 
   return (
-    <>
+    <div className="page settings-page">
       <section className="page-intro">
         <h2>Style presets stay in sync with the in-Discord <code>/tune</code> command.</h2>
         <p>
@@ -539,6 +539,6 @@ export default function SettingsPage() {
           </article>
         </section>
       </div>
-    </>
+    </div>
   )
 }

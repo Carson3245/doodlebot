@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../auth.jsx'
+import { useGuild } from '../guild.jsx'
 import { formatDuration } from '../utils.js'
 
 const STATUS_REFRESH_MS = 15_000
 
 export default function DashboardPage() {
   const { authenticated, refreshAuth } = useAuth()
+  const { guilds, selectedGuild } = useGuild()
   const [status, setStatus] = useState({
     loading: true,
     status: 'offline',
@@ -69,10 +71,11 @@ export default function DashboardPage() {
   }, [authenticated, refreshAuth])
 
   const guildSummary = useMemo(() => {
-    if (status.guilds.length === 0) {
+    const pool = selectedGuild ? [selectedGuild] : status.guilds
+    if (!pool || pool.length === 0) {
       return [{ id: 'placeholder', name: 'No guilds connected yet.', placeholder: true }]
     }
-    return status.guilds.map((guild) => ({
+    return pool.map((guild) => ({
       ...guild,
       initials: (guild.name || '')
         .split(' ')
@@ -81,7 +84,7 @@ export default function DashboardPage() {
         .slice(0, 2)
         .toUpperCase()
     }))
-  }, [status.guilds])
+  }, [selectedGuild, status.guilds])
 
   const handleSubmit = async (event) => {
     event.preventDefault()
@@ -144,7 +147,7 @@ export default function DashboardPage() {
         : undefined
 
   return (
-    <>
+    <div className="page dashboard-page">
       <section className="stat-grid">
         <article className="stat-card">
           <p className="stat-card__label">Bot status</p>
@@ -163,7 +166,7 @@ export default function DashboardPage() {
         <article className="stat-card">
           <p className="stat-card__label">Connected guilds</p>
           <p className="stat-card__value" id="guild-count">
-            {status.loading ? '--' : status.guilds.length}
+            {status.loading ? '--' : guilds.length}
           </p>
           <span className="stat-card__helper">Refreshed from /api/status</span>
         </article>
@@ -180,8 +183,8 @@ export default function DashboardPage() {
         <article className="panel" id="status-card">
           <header className="panel__header">
             <div>
-              <h2>Connected servers</h2>
-              <p>Guilds currently linked to this bot instance.</p>
+              <h2>Selected server</h2>
+              <p>You're currently managing this guild via the dashboard.</p>
             </div>
           </header>
           <div className="panel__body">
@@ -278,6 +281,6 @@ export default function DashboardPage() {
           </div>
         </article>
       </section>
-    </>
+    </div>
   )
 }

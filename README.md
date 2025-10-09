@@ -64,6 +64,21 @@ Discord bot template focused on moderation tools, a configurable persona, and a 
 
    The helper script waits until the dashboard announces its URL and then opens it for you. If automatic launching fails (for example, in headless environments), the URL is still printed so you can open it manually.
 
+## Troubleshooting chat replies
+
+When DreamGen or the chat pipeline raises an error code, the bot repeats it in Discord so operators can act immediately. Use the table below to resolve the most common issues (the same mapping is referenced inside `src/index.js`).
+
+| Code & message | What it means | Fix |
+| -------------- | ------------- | --- |
+| `DreamGenApiKeyMissing 5001` or `DreamGenUnauthorized 5008` | The request never reached DreamGen because the API key is missing or invalid. | Set `DREAMGEN_API_KEY` in `.env` (or refresh the key in the DreamGen dashboard) and restart the bot. |
+| `DreamGenForbidden 5009` | The account does not have access to the selected model. | Confirm that your DreamGen subscription tier includes API access to `DREAMGEN_MODEL`, or switch to a model in your plan. |
+| `DreamGenModelNotFound 5010` | The requested model ID is wrong or unavailable in your region. | Update `DREAMGEN_MODEL` to an available option or pick a model that matches your subscription. |
+| `DreamGenRateLimited 5011` | DreamGen throttled the request because you hit the concurrency or RPM quota. | Wait a few seconds before retrying, or contact DreamGen to raise the limit. |
+| `DreamGenServerError 5012` | DreamGen returned a 5xx response. | Retry shortly; if the issue persists, check DreamGen status or fall back to another provider. |
+| `ChatProvidersNotConfigured 5201` | The bot could not find a provider to call. | Set `CHAT_PROVIDERS=dreamgen` (or another provider order) in `.env` and restart. |
+| `AllChatProvidersFailed 5202` | Every configured provider rejected the request. | Inspect the preceding DreamGen errors, verify network access, and ensure at least one provider is reachable. |
+| `FilteredChatOutputEmpty 5203` | The provider responded, but the sanitizer dropped the text (for example, it only contained control characters). | Ask the member to rephrase or check the provider dashboard for unusual output—valid replies should now preserve accents and emojis. |
+
 ### Windows one-click launcher with RAM usage monitor
 
 If you prefer a single command on Windows, double-click `scripts/startAll.bat`. The batch file:

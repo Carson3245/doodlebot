@@ -7,6 +7,8 @@ import { createDashboard } from './dashboard/server.js';
 import { createChatReply } from './chat/responder.js';
 import { recordInteraction } from './brain/brainStore.js';
 import { getStyleSync, loadStyle } from './config/styleStore.js';
+import { getCommandSettings, incrementCommandUsage, loadCommandConfig } from './config/commandStore.js';
+import { ModerationEngine } from './moderation/moderationEngine.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -24,9 +26,12 @@ if (!token) {
 }
 
 const client = createClient();
+const moderation = new ModerationEngine(client);
 
 async function bootstrap() {
   await loadStyle();
+  await loadCommandConfig();
+  await moderation.init();
   const commands = await loadCommands();
 
   commands.forEach((command) => {
@@ -50,7 +55,14 @@ async function bootstrap() {
       return;
     }
 
-    const cooldown = applyCooldown(interaction, command);
+    const settings = getCommandSettings(command.data.name);
+    if (settings.enabled === false) {
+      await interaction.reply({ content: 'This command is currently disabled by an administrator.', ephemeral: true });
+      return;
+    }
+
+    const cooldownSeconds = settings.cooldown ?? command.cooldown ?? 3;
+    const cooldown = applyCooldown(interaction, command, cooldownSeconds);
     if (!cooldown.allowed) {
       await interaction.reply({ content: cooldown.message, ephemeral: true });
       return;
@@ -58,6 +70,9 @@ async function bootstrap() {
 
     try {
       await command.execute(interaction);
+      incrementCommandUsage(command.data.name).catch((error) => {
+        console.error('Failed to track command usage:', error);
+      });
     } catch (error) {
       console.error(error);
       if (interaction.deferred || interaction.replied) {
@@ -82,6 +97,34 @@ async function bootstrap() {
         return;
       }
 
+      if (trimmed.startsWith('support')) {
+        if (!message.guild) {
+          await message.reply('Please run this command inside the server so I can reach the moderation team.');
+          return;
+        }
+
+        const request = content.slice(prefix.length + 'support'.length).trim();
+        try {
+          const member = message.member ?? (await message.guild.members.fetch(message.author.id).catch(() => null));
+          if (!member) {
+            await message.reply('I could not verify your membership in this server.');
+            return;
+          }
+
+          await moderation.postMemberMessage({
+            guild: message.guild,
+            member,
+            body: request || 'Member requested support.'
+          });
+
+          await message.reply('Thanks! I passed your request to the moderation team—they will reply here privately soon.');
+        } catch (error) {
+          console.error('Failed to forward support request:', error);
+          await message.reply('I could not forward that request just now. Please try again or ping a moderator.');
+        }
+        return;
+      }
+
       if (trimmed.startsWith('help')) {
         await message.reply('Use the `/ban` and `/kick` commands or open the web dashboard for more actions.');
         return;
@@ -94,6 +137,15 @@ async function bootstrap() {
 
       await message.reply('I do not recognize that command. Use `!help` to see the options.');
       return;
+    }
+
+    try {
+      const moderationResult = await moderation.handleMessage(message);
+      if (moderationResult?.actionTaken) {
+        return;
+      }
+    } catch (error) {
+      console.error('Automod failed to process message:', error);
     }
 
     const botUser = client.user;
@@ -179,6 +231,7 @@ async function bootstrap() {
     } catch (error) {
       console.error('createChatReply failed 9001', error);
       const errorMessage = error?.message || '';
+      // See README.md "Troubleshooting chat replies" for fixes mapped to these error codes.
       if (errorMessage.includes('DreamGenApiKeyMissing 5001') || errorMessage.includes('DreamGenUnauthorized 5008')) {
         await message.reply('DreamGen API is not available. Ask an admin to verify the `DREAMGEN_API_KEY` environment variable.');
         return;
@@ -235,7 +288,7 @@ async function bootstrap() {
     startConversation(message.author.id, message.channelId, updatedHistory);
   });
 
-  const app = createDashboard(client);
+  const app = createDashboard(client, moderation);
   app.listen(dashboardPort, () => {
     console.log(`Dashboard available at http://localhost:${dashboardPort}`);
   });
@@ -243,9 +296,9 @@ async function bootstrap() {
   await client.login(token);
 }
 
-function applyCooldown(interaction, command) {
+function applyCooldown(interaction, command, cooldownSeconds) {
   const now = Date.now();
-  const cooldownAmount = (command.cooldown ?? 3) * 1000;
+  const cooldownAmount = (cooldownSeconds ?? 3) * 1000;
 
   if (!client.cooldowns.has(command.data.name)) {
     client.cooldowns.set(command.data.name, new Collection());

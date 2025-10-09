@@ -36,6 +36,7 @@ const defaultModeration = {
 
 let cachedModeration = null;
 let loaded = false;
+const subscribers = new Set();
 
 export async function loadModerationConfig() {
   if (loaded && cachedModeration) {
@@ -54,6 +55,7 @@ export async function loadModerationConfig() {
   }
 
   loaded = true;
+  notifySubscribers();
   return cachedModeration;
 }
 
@@ -66,11 +68,25 @@ export async function saveModerationConfig(update) {
   cachedModeration = merged;
   loaded = true;
   await persistModeration(merged);
+  notifySubscribers();
   return merged;
 }
 
 export function getModerationConfigSync() {
   return cachedModeration ?? defaultModeration;
+}
+
+export function onModerationConfigChange(listener) {
+  if (typeof listener !== 'function') {
+    return () => {};
+  }
+  subscribers.add(listener);
+  if (cachedModeration) {
+    listener(cachedModeration);
+  }
+  return () => {
+    subscribers.delete(listener);
+  };
 }
 
 function mergeModeration(partial = {}) {
@@ -155,4 +171,14 @@ function clampNumber(value, min, max, fallback) {
 async function persistModeration(data) {
   await fs.mkdir(dataDirectory, { recursive: true });
   await fs.writeFile(moderationFile, JSON.stringify(data, null, 2));
+}
+
+function notifySubscribers() {
+  for (const listener of subscribers) {
+    try {
+      listener(cachedModeration ?? defaultModeration);
+    } catch (error) {
+      console.error('Moderation subscriber failed:', error);
+    }
+  }
 }
