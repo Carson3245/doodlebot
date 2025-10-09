@@ -446,12 +446,29 @@ function buildSystemMessage(entry) {
 }
 
 function createMessage({ authorType, authorId, authorTag, body, via }) {
+  const normalizedType = typeof authorType === 'string' ? authorType.toLowerCase() : 'system'
   const content = String(body ?? '').trim()
+  const tag = typeof authorTag === 'string' ? authorTag : null
+  const authorIdString = authorId ? String(authorId) : null
+  const displayName =
+    tag ??
+    (normalizedType === 'system'
+      ? 'System'
+      : normalizedType === 'moderator'
+        ? 'Moderator'
+        : authorIdString)
+
   return {
     id: createId(),
-    authorType,
-    authorId: authorId ? String(authorId) : null,
-    authorTag: authorTag ?? null,
+    authorType: normalizedType,
+    authorRole: normalizedType,
+    role: normalizedType,
+    authorId: authorIdString,
+    authorTag: tag,
+    author: displayName,
+    authorName: displayName,
+    displayName,
+    username: displayName,
     body: content,
     content,
     via: via ?? null,
@@ -700,24 +717,55 @@ function normalizeActionRecord(raw = {}) {
 
 function normalizeMessageRecord(raw = {}) {
   const createdAt = raw.createdAt ?? new Date().toISOString()
-  const authorType =
-    typeof raw.authorType === 'string' ? raw.authorType.toLowerCase() : 'system'
+  const typeValue =
+    typeof raw.authorType === 'string'
+      ? raw.authorType.toLowerCase()
+      : typeof raw.role === 'string'
+        ? raw.role.toLowerCase()
+        : typeof raw.authorRole === 'string'
+          ? raw.authorRole.toLowerCase()
+          : 'system'
   const bodySource =
     typeof raw.body === 'string'
       ? raw.body
       : typeof raw.content === 'string'
         ? raw.content
-        : ''
+          : ''
   const body = bodySource.trim()
   const content =
     typeof raw.content === 'string' && raw.content.trim().length
       ? raw.content.trim()
       : body
+  const tag =
+    typeof raw.authorTag === 'string' && raw.authorTag.trim().length
+      ? raw.authorTag.trim()
+      : typeof raw.author === 'string' && raw.author.trim().length
+        ? raw.author.trim()
+        : typeof raw.authorName === 'string' && raw.authorName.trim().length
+          ? raw.authorName.trim()
+          : typeof raw.username === 'string' && raw.username.trim().length
+            ? raw.username.trim()
+            : null
+  const authorId =
+    raw.authorId
+      ? String(raw.authorId)
+      : raw.userId
+        ? String(raw.userId)
+        : null
   return {
     id: raw.id ?? createId(),
-    authorType,
-    authorId: raw.authorId ? String(raw.authorId) : null,
-    authorTag: raw.authorTag ?? null,
+    authorType: typeValue,
+    authorRole: typeValue,
+    role: typeValue,
+    authorId,
+    authorTag: tag,
+    author: tag ?? (typeValue === 'system' ? 'System' : typeValue === 'moderator' ? 'Moderator' : authorId),
+    authorName:
+      tag ?? (typeValue === 'system' ? 'System' : typeValue === 'moderator' ? 'Moderator' : authorId),
+    displayName:
+      tag ?? (typeValue === 'system' ? 'System' : typeValue === 'moderator' ? 'Moderator' : authorId),
+    username:
+      tag ?? (typeValue === 'system' ? 'System' : typeValue === 'moderator' ? 'Moderator' : authorId),
     body,
     content,
     via: raw.via ?? null,
