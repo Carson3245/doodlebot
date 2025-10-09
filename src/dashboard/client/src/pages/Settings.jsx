@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useAuth } from '../auth.jsx'
+import { useAuth } from '../authContext.js'
 import { formatDateTime } from '../utils.js'
 
 const SECTIONS = [

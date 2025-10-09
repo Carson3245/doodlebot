@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useAuth } from '../auth.jsx'
+import { useAuth } from '../authContext.js'
 
 export default function CommandsPage() {
   const { authenticated, refreshAuth } = useAuth()

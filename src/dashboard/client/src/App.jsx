@@ -7,8 +7,8 @@ import LogsPage from './pages/Logs.jsx'
 import ModerationPage from './pages/Moderation.jsx'
 import GuildSelectionPage from './pages/GuildSelection.jsx'
 import LoginPage from './pages/Login.jsx'
-import { useAuth } from './auth.jsx'
-import { useGuild } from './guild.jsx'
+import { useAuth } from './authContext.js'
+import { useGuild } from './guildContext.js'
 
 function AuthGuard() {
   const { loading, authenticated } = useAuth()

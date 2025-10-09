@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useAuth } from '../auth.jsx'
-import { useGuild } from '../guild.jsx'
+import { useAuth } from '../authContext.js'
+import { useGuild } from '../guildContext.js'
 import { formatDuration } from '../utils.js'
 
 const STATUS_REFRESH_MS = 15_000

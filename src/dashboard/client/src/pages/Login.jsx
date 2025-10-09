@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../auth.jsx'
+import { useAuth } from '../authContext.js'
 import logoSrc from '../assets/logo.svg'
 
 export default function LoginPage() {

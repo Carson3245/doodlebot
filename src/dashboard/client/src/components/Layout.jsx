@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
-import { useAuth } from '../auth.jsx'
-import { useGuild } from '../guild.jsx'
+import { useAuth } from '../authContext.js'
+import { useGuild } from '../guildContext.js'
 import logoSrc from '../assets/logo.svg'
 
 const NAV_ITEMS = [
@@ -183,7 +183,6 @@ function SidebarSection({ label, items, registerLink, useEndProp = false }) {
         <SidebarLink
           key={item.to}
           to={item.to}
-          registerLink={registerLink}
           linkRef={linkRef}
           useEndProp={useEndProp && item.to === '/'}
         >
@@ -194,7 +193,7 @@ function SidebarSection({ label, items, registerLink, useEndProp = false }) {
   )
 }
 
-function SidebarLink({ children, to, registerLink, linkRef, useEndProp, ...props }) {
+function SidebarLink({ children, to, linkRef, useEndProp, ...props }) {
   const combinedRef = useCallback(
     (node) => {
       linkRef?.(node, to)

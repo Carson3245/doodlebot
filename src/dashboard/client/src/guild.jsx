@@ -1,7 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
-import { useAuth } from './auth.jsx'
-
-const GuildContext = createContext(null)
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAuth } from './authContext.js'
+import { GuildContext } from './guildContext.js'
 const STORAGE_KEY = 'doodlebot.selectedGuild'
 
 export function GuildProvider({ children }) {
@@ -84,10 +83,3 @@ export function GuildProvider({ children }) {
   return <GuildContext.Provider value={value}>{children}</GuildContext.Provider>
 }
 
-export function useGuild() {
-  const context = useContext(GuildContext)
-  if (!context) {
-    throw new Error('useGuild must be used within a GuildProvider')
-  }
-  return context
-}

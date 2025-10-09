@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../auth.jsx'
-import { useGuild } from '../guild.jsx'
+import { useAuth } from '../authContext.js'
+import { useGuild } from '../guildContext.js'
 
 export default function GuildSelectionPage() {
   const navigate = useNavigate()
