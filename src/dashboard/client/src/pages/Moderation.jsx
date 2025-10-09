@@ -36,6 +36,22 @@ function createQuickActionState() {
   }
 }
 
+function createEmptyCaseDetail() {
+  return {
+    loading: false,
+    messages: [],
+    participants: [],
+    subject: '',
+    status: null,
+    openedAt: null,
+    openedBy: null,
+    error: null,
+    sending: false,
+    statusUpdating: false,
+    unreadCount: 0
+  }
+}
+
 const feedbackPalette = {
   success: { color: 'var(--success, #4caf50)' },
   error: { color: 'var(--danger, #e53935)' },
@@ -43,6 +59,16 @@ const feedbackPalette = {
 }
 
 const guildDatalistId = 'moderation-guild-options'
+
+const CASE_FILTER_OPTIONS = [
+  { value: 'active', label: 'Ativos' },
+  { value: 'pending-response', label: 'Aguardando resposta' },
+  { value: 'escalated', label: 'Escalonados' },
+  { value: 'open', label: 'Somente abertos' },
+  { value: 'closed', label: 'Fechados' },
+  { value: 'archived', label: 'Arquivados' },
+  { value: 'all', label: 'Todos' }
+]
 
 export default function ModerationPage() {
   const { authenticated, refreshAuth } = useAuth()
@@ -77,25 +103,16 @@ export default function ModerationPage() {
     selectedCaseId: null,
     selectedCaseGuildId: null
   })
-  const [caseDetail, setCaseDetail] = useState({
-    loading: false,
-    messages: [],
-    participants: [],
-    subject: '',
-    status: null,
-    openedAt: null,
-    openedBy: null,
-    error: null,
-    sending: false,
-    statusUpdating: false,
-    unreadCount: 0
-  })
+  const [caseDetail, setCaseDetail] = useState(() => createEmptyCaseDetail())
   const [caseReply, setCaseReply] = useState('')
   const [caseMenuOpen, setCaseMenuOpen] = useState(false)
-  const openCaseCount = useMemo(
-    () => caseInbox.items.filter((item) => (item.status || '').toLowerCase() !== 'closed').length,
-    [caseInbox.items]
+  const [caseFilter, setCaseFilter] = useState('active')
+  const caseCountSummary = useMemo(
+    () => formatCaseFilterSummary(caseFilter, caseInbox.items.length),
+    [caseFilter, caseInbox.items.length]
   )
+  const conversationLocked = isCaseTerminal(caseDetail.status)
+  const archivedCase = isCaseArchived(caseDetail.status)
   const [config, setConfig] = useState(null)
   const [keywordsInput, setKeywordsInput] = useState('')
   const [feedback, setFeedback] = useState('')
@@ -182,27 +199,23 @@ export default function ModerationPage() {
         selectedCaseId: null,
         selectedCaseGuildId: null
       })
-      setCaseDetail({
-        loading: false,
-        messages: [],
-        participants: [],
-        subject: '',
-        status: null,
-        openedAt: null,
-        openedBy: null,
-        error: null,
-        sending: false,
-        statusUpdating: false,
-        unreadCount: 0
-      })
+      setCaseDetail(createEmptyCaseDetail())
       setCaseReply('')
       return
     }
 
     try {
       setCaseInbox((prev) => ({ ...prev, loading: true, error: null }))
-      const query = selectedGuild?.id ? `?guildId=${encodeURIComponent(selectedGuild.id)}` : ''
-      const response = await fetch(`/api/moderation/cases${query}`)
+      const params = new URLSearchParams()
+      if (selectedGuild?.id) {
+        params.set('guildId', selectedGuild.id)
+      }
+      const statusParam = resolveCaseFilterParam(caseFilter)
+      if (statusParam && statusParam !== 'all') {
+        params.set('status', statusParam)
+      }
+      const query = params.toString()
+      const response = await fetch(`/api/moderation/cases${query ? `?${query}` : ''}`)
       if (response.status === 401) {
         refreshAuth()
         return
@@ -212,15 +225,19 @@ export default function ModerationPage() {
       }
       const data = await response.json()
       setCaseInbox((prev) => {
-        const items = Array.isArray(data) ? data : []
-        const hasCurrent = prev.selectedCaseId && items.some((item) => item.id === prev.selectedCaseId)
-        const nextSelectedCaseId = hasCurrent ? prev.selectedCaseId : items[0]?.id ?? null
+        const rawItems = Array.isArray(data) ? data : []
+        const filteredItems = applyCaseFilter(rawItems, caseFilter)
+        const hasCurrent =
+          prev.selectedCaseId && filteredItems.some((item) => item.id === prev.selectedCaseId)
+        const nextSelectedCaseId = hasCurrent ? prev.selectedCaseId : filteredItems[0]?.id ?? null
         const nextSelectedGuildId = nextSelectedCaseId
-          ? items.find((item) => item.id === nextSelectedCaseId)?.guildId ?? null
+          ? filteredItems.find((item) => item.id === nextSelectedCaseId)?.guildId ??
+            rawItems.find((item) => item.id === nextSelectedCaseId)?.guildId ??
+            null
           : null
         return {
           loading: false,
-          items,
+          items: filteredItems,
           error: null,
           selectedCaseId: nextSelectedCaseId,
           selectedCaseGuildId: nextSelectedGuildId
@@ -234,7 +251,7 @@ export default function ModerationPage() {
         error: 'Unable to load moderation cases.'
       }))
     }
-  }, [authenticated, refreshAuth, selectedGuild?.id])
+  }, [authenticated, caseFilter, refreshAuth, selectedGuild?.id])
 
   const loadGuilds = useCallback(async () => {
     if (!authenticated) {
@@ -262,19 +279,7 @@ export default function ModerationPage() {
   const loadCaseDetail = useCallback(
     async (caseId, guildId) => {
       if (!caseId || !guildId || !authenticated) {
-        setCaseDetail({
-          loading: false,
-          messages: [],
-          participants: [],
-          subject: '',
-          status: null,
-          openedAt: null,
-          openedBy: null,
-          error: null,
-          sending: false,
-          statusUpdating: false,
-          unreadCount: 0
-        })
+        setCaseDetail(createEmptyCaseDetail())
         setCaseReply('')
         return
       }
@@ -361,14 +366,23 @@ export default function ModerationPage() {
         type === 'case:message' ||
         type === 'cases:updated' ||
         type === 'case:status' ||
-        type === 'case:created'
+        type === 'case:created' ||
+        type === 'case:deleted'
       ) {
         loadCases()
         const targetCaseId = payload?.caseId ?? payload?.id ?? null
         if (targetCaseId && caseInbox.selectedCaseId === targetCaseId) {
           const guildId =
             payload?.guildId ?? caseInbox.selectedCaseGuildId ?? selectedGuild?.id ?? null
-          if (guildId) {
+          if (type === 'case:deleted' || payload?.deleted) {
+            setCaseInbox((prev) => ({
+              ...prev,
+              selectedCaseId: null,
+              selectedCaseGuildId: null
+            }))
+            setCaseMenuOpen(false)
+            loadCaseDetail(null, null)
+          } else if (guildId) {
             loadCaseDetail(targetCaseId, guildId)
           }
         }
@@ -700,6 +714,104 @@ export default function ModerationPage() {
     },
     [authenticated, caseInbox.selectedCaseGuildId, caseInbox.selectedCaseId, loadCases, refreshAuth, selectedGuild?.id]
   )
+
+  const handleDeleteCase = useCallback(async () => {
+    if (!caseInbox.selectedCaseId) {
+      return
+    }
+
+    const currentCaseId = caseInbox.selectedCaseId
+    const currentGuildId = caseInbox.selectedCaseGuildId
+
+    const confirmed =
+      typeof window === 'undefined'
+        ? true
+        : window.confirm('Tem certeza de que deseja excluir este caso? Esta ação não pode ser desfeita.')
+    if (!confirmed) {
+      setCaseMenuOpen(false)
+      return
+    }
+
+    const guildId = selectedGuild?.id || currentGuildId
+    if (!guildId) {
+      setCaseDetail((prev) => ({
+        ...prev,
+        error: 'Selecione uma guilda antes de excluir o caso.'
+      }))
+      return
+    }
+    if (!authenticated) {
+      setCaseDetail((prev) => ({
+        ...prev,
+        error: 'Faça login como moderador para excluir o caso.'
+      }))
+      return
+    }
+
+    setCaseDetail((prev) => ({ ...prev, statusUpdating: true, error: null }))
+    try {
+      const response = await fetch(`/api/guilds/${guildId}/cases/${currentCaseId}`, {
+        method: 'DELETE'
+      })
+      if (response.status === 401) {
+        refreshAuth()
+        setCaseDetail((prev) => ({
+          ...prev,
+          statusUpdating: false,
+          error: 'Sessão expirada. Entre novamente.'
+        }))
+        return
+      }
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data?.error || 'Unable to delete case.')
+      }
+
+      let nextCaseId = null
+      let nextCaseGuildId = null
+      setCaseInbox((prev) => {
+        const filtered = prev.items.filter((item) => item.id !== currentCaseId)
+        nextCaseId = filtered[0]?.id ?? null
+        nextCaseGuildId = nextCaseId
+          ? filtered.find((item) => item.id === nextCaseId)?.guildId ??
+            prev.selectedCaseGuildId ??
+            selectedGuild?.id ??
+            null
+          : null
+        return {
+          ...prev,
+          items: filtered,
+          selectedCaseId: nextCaseId,
+          selectedCaseGuildId: nextCaseGuildId
+        }
+      })
+
+      setCaseDetail(createEmptyCaseDetail())
+      setCaseReply('')
+      setCaseMenuOpen(false)
+
+      if (nextCaseId && nextCaseGuildId) {
+        loadCaseDetail(nextCaseId, nextCaseGuildId)
+      }
+
+      loadCases()
+    } catch (error) {
+      console.error('Failed to delete case', error)
+      setCaseDetail((prev) => ({
+        ...prev,
+        statusUpdating: false,
+        error: error?.message ?? 'Failed to delete case.'
+      }))
+    }
+  }, [
+    authenticated,
+    caseInbox.selectedCaseGuildId,
+    caseInbox.selectedCaseId,
+    loadCaseDetail,
+    loadCases,
+    refreshAuth,
+    selectedGuild?.id
+  ])
 
   const performMemberLookup = useCallback(
     async (action, query) => {
@@ -1466,10 +1578,24 @@ const submitQuickAction = useCallback(
           </div>
           <div className="case-hub__toolbar">
             <span className="panel__meta">
-              {caseInbox.loading
-                ? 'Atualizando casos...'
-                : `${openCaseCount} ${openCaseCount === 1 ? 'caso aberto' : 'casos abertos'}`}
+              {caseInbox.loading ? 'Atualizando casos...' : caseCountSummary}
             </span>
+            <label className="visually-hidden" htmlFor="case-filter">
+              Filtrar casos
+            </label>
+            <select
+              id="case-filter"
+              className="case-hub__filter"
+              value={caseFilter}
+              onChange={(event) => setCaseFilter(event.target.value)}
+              disabled={caseInbox.loading}
+            >
+              {CASE_FILTER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               className="button button--ghost"
@@ -1487,7 +1613,7 @@ const submitQuickAction = useCallback(
             ) : caseInbox.error ? (
               <p className="placeholder">{caseInbox.error}</p>
             ) : caseInbox.items.length === 0 ? (
-              <p className="placeholder">Nenhum caso aberto. Os membros podem iniciar uma conversa pelo bot.</p>
+              <p className="placeholder">{formatEmptyCaseMessage(caseFilter)}</p>
             ) : (
               <ul className="case-hub__items">
                 {caseInbox.items.map((item) => {
@@ -1600,6 +1726,26 @@ const submitQuickAction = useCallback(
                             Fechar caso
                           </button>
                         </li>
+                        <li role="none">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => handleUpdateCaseStatus('archived')}
+                            disabled={caseDetail.statusUpdating || archivedCase}
+                          >
+                            {archivedCase ? 'Caso arquivado' : 'Arquivar caso'}
+                          </button>
+                        </li>
+                        <li role="none">
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={handleDeleteCase}
+                            disabled={caseDetail.statusUpdating}
+                          >
+                            Excluir caso
+                          </button>
+                        </li>
                       </ul>
                     )}
                   </div>
@@ -1644,8 +1790,8 @@ const submitQuickAction = useCallback(
                   <textarea
                     id="case-reply"
                     placeholder={
-                      (caseDetail.status || '').toLowerCase() === 'closed'
-                        ? 'O caso está encerrado. Reabra para responder.'
+                      conversationLocked
+                        ? 'O caso está encerrado ou arquivado. Reabra para responder.'
                         : 'Digite uma resposta para o membro...'
                     }
                     value={caseReply}
@@ -1653,7 +1799,7 @@ const submitQuickAction = useCallback(
                     disabled={
                       !authenticated ||
                       caseDetail.sending ||
-                      (caseDetail.status || '').toLowerCase() === 'closed'
+                      conversationLocked
                     }
                     rows={4}
                   />
@@ -1666,7 +1812,7 @@ const submitQuickAction = useCallback(
                         !authenticated ||
                         caseDetail.sending ||
                         !caseInbox.selectedCaseId ||
-                        (caseDetail.status || '').toLowerCase() === 'closed'
+                        conversationLocked
                       }
                     >
                       {caseDetail.sending ? 'Enviando...' : 'Enviar mensagem'}
@@ -1950,16 +2096,108 @@ const submitQuickAction = useCallback(
 }
 
 function formatCaseStatus(status) {
-  const value = (status || 'open').toLowerCase()
+  const value = getStatusValue(status)
   switch (value) {
     case 'pending-response':
       return 'Aguardando resposta'
+    case 'pending':
+      return 'Pendente'
     case 'closed':
       return 'Fechado'
+    case 'archived':
+      return 'Arquivado'
     case 'escalated':
       return 'Escalonado'
     case 'open':
     default:
       return 'Aberto'
+  }
+}
+
+function getStatusValue(status) {
+  return String(status ?? 'open').toLowerCase()
+}
+
+function isCaseTerminal(status) {
+  const value = getStatusValue(status)
+  return value === 'closed' || value === 'archived'
+}
+
+function isCaseArchived(status) {
+  return getStatusValue(status) === 'archived'
+}
+
+function applyCaseFilter(items, filter) {
+  if (!Array.isArray(items)) {
+    return []
+  }
+  const value = String(filter ?? 'all').toLowerCase()
+  switch (value) {
+    case 'active':
+      return items.filter((item) => !isCaseTerminal(item.status))
+    case 'archived':
+      return items.filter((item) => isCaseArchived(item.status))
+    case 'closed':
+      return items.filter((item) => getStatusValue(item.status) === 'closed')
+    case 'open':
+      return items.filter((item) => getStatusValue(item.status) === 'open')
+    case 'pending-response':
+      return items.filter((item) => getStatusValue(item.status) === 'pending-response')
+    case 'escalated':
+      return items.filter((item) => getStatusValue(item.status) === 'escalated')
+    case 'all':
+    default:
+      return [...items]
+  }
+}
+
+function resolveCaseFilterParam(filter) {
+  const value = String(filter ?? 'all').toLowerCase()
+  if (value === 'active') {
+    return 'all'
+  }
+  return value
+}
+
+function formatCaseFilterSummary(filter, count) {
+  const value = String(filter ?? 'all').toLowerCase()
+  const noun = count === 1 ? 'caso' : 'casos'
+  switch (value) {
+    case 'active':
+      return `${count} ${noun} ativos`
+    case 'archived':
+      return `${count} ${noun} arquivados`
+    case 'closed':
+      return `${count} ${noun} fechados`
+    case 'pending-response':
+      return `${count} ${noun} aguardando resposta`
+    case 'open':
+      return `${count} ${noun} abertos`
+    case 'escalated':
+      return `${count} ${noun} escalonados`
+    case 'all':
+    default:
+      return `${count} ${noun}`
+  }
+}
+
+function formatEmptyCaseMessage(filter) {
+  const value = String(filter ?? 'all').toLowerCase()
+  switch (value) {
+    case 'active':
+      return 'Nenhum caso ativo. Os membros podem iniciar uma conversa pelo bot.'
+    case 'open':
+      return 'Nenhum caso aberto.'
+    case 'archived':
+      return 'Nenhum caso arquivado.'
+    case 'closed':
+      return 'Nenhum caso fechado.'
+    case 'pending-response':
+      return 'Nenhum caso aguardando resposta.'
+    case 'escalated':
+      return 'Nenhum caso escalonado.'
+    case 'all':
+    default:
+      return 'Nenhum caso encontrado.'
   }
 }

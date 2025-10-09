@@ -415,6 +415,28 @@ export function createDashboard(client, moderation) {
     }
   });
 
+  guildRouter.delete('/cases/:caseId', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      await moderation.deleteCase({
+        guildId: req.params.guildId,
+        caseId: req.params.caseId,
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to delete moderation case:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to delete case.' });
+    }
+  });
+
   guildRouter.post('/cases', async (req, res) => {
     if (!moderation) {
       res.status(503).json({ error: 'Moderation engine not ready.' });
@@ -744,6 +766,35 @@ export function createDashboard(client, moderation) {
     } catch (error) {
       console.error('Failed to update case status:', error);
       res.status(500).json({ error: error?.message ?? 'Failed to update case status.' });
+    }
+  });
+
+  api.delete('/moderation/cases/:caseId', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const caseEntry = await moderation.getCase(req.params.caseId);
+      if (!caseEntry) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      await moderation.deleteCase({
+        guildId: caseEntry.guildId,
+        caseId: caseEntry.id,
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to delete moderation case:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to delete case.' });
     }
   });
 

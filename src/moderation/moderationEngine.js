@@ -15,7 +15,8 @@ import {
   updateCaseStatus,
   listCases,
   getCaseForGuild,
-  getCase
+  getCase,
+  deleteCase
 } from './caseStore.js'
 
 const LINK_REGEX = /(https?:\/\/|www\.)\S+/i
@@ -695,6 +696,17 @@ export class ModerationEngine {
       actorTag: moderatorTag ?? null,
       actorType: 'moderator',
       note: note ?? null
+    })
+  }
+
+  async deleteCase({ guildId, caseId, moderatorId, moderatorTag }) {
+    await this.init()
+    return deleteCase({
+      guildId,
+      caseId,
+      actorId: moderatorId ? String(moderatorId) : null,
+      actorTag: moderatorTag ?? null,
+      actorType: 'moderator'
     })
   }
 

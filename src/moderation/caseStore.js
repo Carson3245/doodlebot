@@ -19,10 +19,14 @@ const STATUS_ALIASES = new Map([
   ['escalated', 'escalated'],
   ['pending', 'pending'],
   ['closed', 'closed'],
+  ['archived', 'archived'],
+  ['archive', 'archived'],
   ['open', 'open']
 ])
 
 const DEFAULT_STATUS = 'open'
+
+const TERMINAL_STATUSES = new Set(['closed', 'archived'])
 
 const defaultData = {
   updatedAt: null,
@@ -148,7 +152,10 @@ export async function ensureMemberCase({
   const now = new Date().toISOString()
 
   const existing = data.cases.find(
-    (item) => item.guildId === String(guildId) && item.userId === String(userId) && item.status !== 'closed'
+    (item) =>
+      item.guildId === String(guildId) &&
+      item.userId === String(userId) &&
+      !isTerminalStatus(item.status)
   )
 
   if (existing) {
@@ -269,7 +276,7 @@ export async function findActiveCaseForMember(userId) {
     return null
   }
 
-  const active = candidates.find((entry) => (entry.status ?? DEFAULT_STATUS) !== 'closed')
+  const active = candidates.find((entry) => !isTerminalStatus(entry.status ?? DEFAULT_STATUS))
   const selected = active ?? candidates[0]
   return { ...selected }
 }
@@ -361,6 +368,44 @@ export async function updateCaseStatus({
   return caseEntry
 }
 
+export async function deleteCase({ guildId, caseId, actorId, actorTag, actorType = 'system' }) {
+  if (!caseId) {
+    throw new Error('Case ID is required to delete a case')
+  }
+
+  const data = await loadData()
+  const index = data.cases.findIndex(
+    (entry) => entry.id === caseId && (!guildId || entry.guildId === String(guildId))
+  )
+
+  if (index === -1) {
+    throw new Error('Case not found')
+  }
+
+  const [removed] = data.cases.splice(index, 1)
+  const now = new Date().toISOString()
+  data.updatedAt = now
+
+  adjustStatsAfterRemoval(data, removed)
+  rebuildUserTotalsForMember(data, removed.guildId, removed.userId)
+  sortCases(data)
+  await persistData(data)
+
+  const payload = {
+    guildId: removed.guildId ?? null,
+    caseId: removed.id ?? caseId,
+    actorId: actorId ? String(actorId) : null,
+    actorTag: actorTag ?? null,
+    actorType: actorType ?? 'system'
+  }
+
+  emitStoreEvent('case:deleted', payload)
+  emitStoreEvent('cases:updated', { ...payload, deleted: true })
+  emitStoreEvent('stats:updated', buildStatsSnapshot(data))
+
+  return removed
+}
+
 export async function listCases({ guildId, status, limit = 50 }) {
   const data = await loadData()
   let items = data.cases.filter((item) => item.guildId === String(guildId))
@@ -449,7 +494,7 @@ function getOrCreateActiveCase(data, entry, now) {
   const guildId = String(entry.guildId)
   const userId = String(entry.userId)
   const existing = data.cases.find(
-    (item) => item.guildId === guildId && item.userId === userId && item.status !== 'closed'
+    (item) => item.guildId === guildId && item.userId === userId && !isTerminalStatus(item.status)
   )
 
   if (existing) {
@@ -676,7 +721,7 @@ function applyCaseStatus(data, caseEntry, status, actor = {}, timestamp = new Da
   caseEntry.auditLog.push(entry)
   trimAuditLog(caseEntry)
 
-  if (normalized === 'closed') {
+  if (isTerminalStatus(normalized)) {
     caseEntry.unreadCount = 0
   }
 
@@ -974,6 +1019,75 @@ function sortCases(data) {
     const right = b.updatedAt ?? b.createdAt
     return right.localeCompare(left)
   })
+}
+
+function isTerminalStatus(status) {
+  if (!status) {
+    return false
+  }
+  const normalized = String(status).toLowerCase().trim()
+  return TERMINAL_STATUSES.has(normalized)
+}
+
+function adjustStatsAfterRemoval(data, caseEntry) {
+  if (!caseEntry) {
+    return
+  }
+  if (!data.stats) {
+    data.stats = { warnings: 0, timeouts: 0, bans: 0, cases: 0 }
+  }
+  data.stats.cases = Math.max(0, (data.stats.cases ?? 0) - 1)
+  for (const action of caseEntry.actions ?? []) {
+    const key = actionToStatKey(action?.type)
+    if (key) {
+      data.stats[key] = Math.max(0, (data.stats[key] ?? 0) - 1)
+    }
+  }
+}
+
+function rebuildUserTotalsForMember(data, guildId, userId) {
+  if (!guildId || !userId) {
+    return
+  }
+  const key = getTotalsKey(guildId, userId)
+  const related = data.cases.filter(
+    (entry) => entry.guildId === String(guildId) && entry.userId === String(userId)
+  )
+
+  if (!related.length) {
+    delete data.userTotals[key]
+    return
+  }
+
+  const totals = defaultTotals()
+  totals.cases = related.length
+  let latest = null
+
+  for (const entry of related) {
+    latest = pickLatest(latest, entry.updatedAt)
+    latest = pickLatest(latest, entry.lastMessageAt)
+    latest = pickLatest(latest, entry.createdAt)
+    for (const action of entry.actions ?? []) {
+      const statKey = actionToStatKey(action?.type)
+      if (statKey) {
+        totals[statKey] = (totals[statKey] ?? 0) + 1
+      }
+      latest = pickLatest(latest, action?.createdAt)
+    }
+  }
+
+  totals.lastActionAt = latest
+  data.userTotals[key] = totals
+}
+
+function pickLatest(current, candidate) {
+  if (!candidate) {
+    return current ?? null
+  }
+  if (!current) {
+    return candidate
+  }
+  return candidate > current ? candidate : current
 }
 
 function actionToStatKey(action) {
