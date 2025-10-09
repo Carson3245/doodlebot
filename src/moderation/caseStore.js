@@ -446,12 +446,14 @@ function buildSystemMessage(entry) {
 }
 
 function createMessage({ authorType, authorId, authorTag, body, via }) {
+  const content = String(body ?? '').trim()
   return {
     id: createId(),
     authorType,
     authorId: authorId ? String(authorId) : null,
     authorTag: authorTag ?? null,
-    body: String(body ?? '').trim(),
+    body: content,
+    content,
     via: via ?? null,
     createdAt: new Date().toISOString()
   }
@@ -700,12 +702,24 @@ function normalizeMessageRecord(raw = {}) {
   const createdAt = raw.createdAt ?? new Date().toISOString()
   const authorType =
     typeof raw.authorType === 'string' ? raw.authorType.toLowerCase() : 'system'
+  const bodySource =
+    typeof raw.body === 'string'
+      ? raw.body
+      : typeof raw.content === 'string'
+        ? raw.content
+        : ''
+  const body = bodySource.trim()
+  const content =
+    typeof raw.content === 'string' && raw.content.trim().length
+      ? raw.content.trim()
+      : body
   return {
     id: raw.id ?? createId(),
     authorType,
     authorId: raw.authorId ? String(raw.authorId) : null,
     authorTag: raw.authorTag ?? null,
-    body: typeof raw.body === 'string' ? raw.body.trim() : '',
+    body,
+    content,
     via: raw.via ?? null,
     createdAt
   }
