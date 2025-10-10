@@ -1,5 +1,5 @@
 :root {
-  font-size: 14px;
+  font-size: 15px;
   color-scheme: dark;
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --background: #0f1321;
@@ -492,7 +492,8 @@ body.auth-locked .app-shell {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 1.25rem;
+  gap: 1.35rem;
+  flex-wrap: wrap;
 }
 
 .panel__header > div:first-child {
@@ -515,6 +516,7 @@ body.auth-locked .app-shell {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+  flex-shrink: 0;
 }
 
 .panel__header-actions:empty {
@@ -1769,9 +1771,9 @@ code {
   background: rgba(17, 23, 42, 0.75);
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.05);
-  padding: 1.1rem;
-  min-height: 360px;
-  height: clamp(26rem, 65vh, 38rem);
+  padding: 1.35rem;
+  min-height: 420px;
+  height: clamp(32rem, 70vh, 44rem);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1791,25 +1793,28 @@ code {
   display: flex;
   flex-direction: column;
   height: 100%;
-  gap: 1rem;
+  gap: 1.15rem;
 }
 
 .case-hub__conversation-header {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 1rem;
+  gap: 1.15rem;
+  flex-wrap: wrap;
 }
 
 .case-hub__conversation-header h3 {
-  font-size: 1.2rem;
-  margin-bottom: 0.35rem;
+  font-size: 1.3rem;
+  margin-bottom: 0.4rem;
+  line-height: 1.4;
 }
 
 .case-hub__conversation-header p {
   color: var(--text-secondary);
-  font-size: 0.85rem;
-  margin-bottom: 0.3rem;
+  font-size: 0.9rem;
+  margin-bottom: 0.4rem;
+  line-height: 1.5;
 }
 
 .case-hub__participants {
@@ -1822,13 +1827,30 @@ code {
   align-items: center;
   gap: 0.5rem;
   position: relative;
+  margin-left: auto;
 }
 
 .case-hub__menu-trigger {
-  width: 36px;
-  height: 36px;
-  font-size: 1.25rem;
+  width: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
   padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(79, 134, 247, 0.12);
+  color: var(--text-primary);
+  font-size: 1.35rem;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.case-hub__menu-trigger:hover,
+.case-hub__menu-trigger:focus-visible {
+  background: rgba(79, 134, 247, 0.2);
+  border-color: rgba(79, 134, 247, 0.45);
+  transform: translateY(-1px);
 }
 
 .case-hub__menu {

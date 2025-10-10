@@ -1453,16 +1453,17 @@ const submitQuickAction = useCallback(
                           )}
                         </div>
                       </div>
-                      <div className="case-hub__conversation-tools">
+                      <div className="case-hub__conversation-tools" ref={caseMenuRef}>
                         <button
                           type="button"
                           className="case-hub__menu-trigger"
-                          ref={caseMenuRef}
                           onClick={() => setCaseMenuOpen((open) => !open)}
                           aria-haspopup="true"
                           aria-expanded={caseMenuOpen}
+                          aria-label="Case actions"
                         >
-                          Actions
+                          <span className="visually-hidden">Case actions</span>
+                          <span aria-hidden="true">⋮</span>
                         </button>
                         {caseMenuOpen && (
                           <div className="case-hub__menu" role="menu">
