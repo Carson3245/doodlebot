@@ -377,6 +377,11 @@ export async function appendCaseMessage({
     throw new Error('Message body cannot be empty')
   }
 
+  const normalizedAuthorType = typeof authorType === 'string' ? authorType.toLowerCase() : 'system'
+  if (normalizedAuthorType === 'bot') {
+    return null
+  }
+
   const data = await loadData()
   const caseEntry = findCase(data, guildId, caseId)
   if (!caseEntry) {
@@ -384,7 +389,7 @@ export async function appendCaseMessage({
   }
 
   const message = createMessage({
-    authorType,
+    authorType: normalizedAuthorType,
     authorId,
     authorTag,
     body,
@@ -715,15 +720,9 @@ function buildSystemMessage(entry) {
 function createMessage({ authorType, authorId, authorTag, body, via }) {
   const normalizedType = typeof authorType === 'string' ? authorType.toLowerCase() : 'system'
   const content = String(body ?? '').trim()
-  const tag = typeof authorTag === 'string' ? authorTag : null
+  const tag = typeof authorTag === 'string' && authorTag.trim().length ? authorTag.trim() : null
   const authorIdString = authorId ? String(authorId) : null
-  const displayName =
-    tag ??
-    (normalizedType === 'system'
-      ? 'System'
-      : normalizedType === 'moderator'
-        ? 'Moderator'
-        : authorIdString)
+  const authorProfile = buildAuthorProfile(normalizedType, authorIdString, tag)
 
   return {
     id: createId(),
@@ -732,10 +731,12 @@ function createMessage({ authorType, authorId, authorTag, body, via }) {
     role: normalizedType,
     authorId: authorIdString,
     authorTag: tag,
-    author: displayName,
-    authorName: displayName,
-    displayName,
-    username: displayName,
+    author: authorProfile,
+    authorProfile,
+    authorLabel: authorProfile.displayName,
+    authorName: authorProfile.displayName,
+    displayName: authorProfile.displayName,
+    username: authorProfile.username,
     body: content,
     content,
     via: via ?? null,
@@ -992,6 +993,9 @@ function normalizeMessageRecord(raw = {}) {
         : typeof raw.authorRole === 'string'
           ? raw.authorRole.toLowerCase()
           : 'system'
+  if (typeValue === 'bot') {
+    return null
+  }
   const bodySource =
     typeof raw.body === 'string'
       ? raw.body
@@ -1019,6 +1023,7 @@ function normalizeMessageRecord(raw = {}) {
       : raw.userId
         ? String(raw.userId)
         : null
+  const authorProfile = buildAuthorProfile(typeValue, authorId, tag)
   return {
     id: raw.id ?? createId(),
     authorType: typeValue,
@@ -1026,17 +1031,36 @@ function normalizeMessageRecord(raw = {}) {
     role: typeValue,
     authorId,
     authorTag: tag,
-    author: tag ?? (typeValue === 'system' ? 'System' : typeValue === 'moderator' ? 'Moderator' : authorId),
-    authorName:
-      tag ?? (typeValue === 'system' ? 'System' : typeValue === 'moderator' ? 'Moderator' : authorId),
-    displayName:
-      tag ?? (typeValue === 'system' ? 'System' : typeValue === 'moderator' ? 'Moderator' : authorId),
-    username:
-      tag ?? (typeValue === 'system' ? 'System' : typeValue === 'moderator' ? 'Moderator' : authorId),
+    author: authorProfile,
+    authorProfile,
+    authorLabel: authorProfile.displayName,
+    authorName: authorProfile.displayName,
+    displayName: authorProfile.displayName,
+    username: authorProfile.username,
     body,
     content,
     via: raw.via ?? null,
     createdAt
+  }
+}
+
+function buildAuthorProfile(authorType, authorId, tag) {
+  const normalizedType = typeof authorType === 'string' ? authorType.toLowerCase() : 'system'
+  const role =
+    normalizedType === 'moderator'
+      ? 'moderator'
+      : normalizedType === 'system'
+        ? 'system'
+        : 'member'
+  const fallbackLabel = role === 'moderator' ? 'Moderator' : role === 'system' ? 'System' : 'Member'
+  const displayName = tag ?? authorId ?? fallbackLabel
+
+  return {
+    id: authorId ?? null,
+    tag: tag ?? null,
+    role,
+    displayName,
+    username: tag ?? authorId ?? fallbackLabel
   }
 }
 

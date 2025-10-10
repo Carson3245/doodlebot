@@ -37,6 +37,8 @@ function createQuickActionState() {
   }
 }
 
+const QUICK_ACTION_KEYS = ['kick', 'ban', 'timeout', 'warn']
+
 function createEmptyCaseDetail() {
   return {
     loading: false,
@@ -92,6 +94,7 @@ export default function ModerationPage() {
   const caseConversationRef = useRef(null)
   const eventSourceRef = useRef(null)
   const reconnectTimerRef = useRef(null)
+  const lastPrefilledCaseRef = useRef(null)
   const [quickActionTargets, setQuickActionTargets] = useState({
     kick: null,
     ban: null,
@@ -566,13 +569,19 @@ export default function ModerationPage() {
   }, [authenticated, refreshAuth])
 
   const updateQuickAction = useCallback((action, patch) => {
-    setQuickActions((prev) => ({
-      ...prev,
-      [action]: {
+    setQuickActions((prev) => {
+      const next = {
         ...prev[action],
         ...patch
       }
-    }))
+      if ((patch.user !== undefined || patch.reason !== undefined || patch.duration !== undefined) && !('feedback' in patch)) {
+        next.feedback = null
+      }
+      return {
+        ...prev,
+        [action]: next
+      }
+    })
   }, [])
 
   const handleSelectCase = useCallback((caseId) => {
@@ -727,6 +736,16 @@ export default function ModerationPage() {
     [authenticated, caseInbox.selectedCaseGuildId, caseInbox.selectedCaseId, loadCases, refreshAuth, selectedGuild?.id]
   )
 
+  const handleCaseStatusChange = useCallback(
+    (nextStatus) => {
+      if (!nextStatus) {
+        return
+      }
+      handleUpdateCaseStatus(nextStatus)
+    },
+    [handleUpdateCaseStatus]
+  )
+
   const handleDeleteCase = useCallback(async () => {
     if (!caseInbox.selectedCaseId) {
       return
@@ -857,6 +876,70 @@ export default function ModerationPage() {
       Object.values(lookupTimers.current).forEach((timer) => clearTimeout(timer))
     }
   }, [])
+
+  useEffect(() => {
+    if (!caseInbox.selectedCaseId) {
+      lastPrefilledCaseRef.current = null
+      return
+    }
+
+    if (lastPrefilledCaseRef.current === caseInbox.selectedCaseId) {
+      return
+    }
+
+    if (!Array.isArray(caseDetail.participants) || caseDetail.participants.length === 0) {
+      return
+    }
+
+    const primaryMember = caseDetail.participants.find((participant) => {
+      const role = (participant.role || participant.type || '').toLowerCase()
+      return role === 'member' && participant.id
+    })
+
+    if (!primaryMember) {
+      return
+    }
+
+    const memberId = String(primaryMember.id)
+    const displayName =
+      primaryMember.displayName || primaryMember.tag || primaryMember.username || memberId
+    const avatar = primaryMember.avatar ?? null
+
+    setQuickActionTargets((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const action of QUICK_ACTION_KEYS) {
+        const current = prev[action]
+        if (!current || current.id !== memberId) {
+          next[action] = {
+            id: memberId,
+            displayName,
+            username: primaryMember.username || displayName,
+            avatar
+          }
+          changed = true
+        }
+      }
+      return changed ? next : prev
+    })
+
+    setQuickActions((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const action of QUICK_ACTION_KEYS) {
+        const current = prev[action]
+        if (!current.user || current.user === memberId) {
+          if (current.user !== memberId) {
+            next[action] = { ...current, user: memberId }
+            changed = true
+          }
+        }
+      }
+      return changed ? next : prev
+    })
+
+    lastPrefilledCaseRef.current = caseInbox.selectedCaseId
+  }, [caseDetail.participants, caseInbox.selectedCaseId])
 
   const handleMemberPick = useCallback(
     (action, member) => {
@@ -1195,7 +1278,7 @@ const submitQuickAction = useCallback(
     <div className="page moderation-page">
       <div className="moderation-page__layout">
         <div className="moderation-page__column moderation-page__column--primary">
-          <section className="panel">
+          <section className="panel panel--compact">
             <header className="panel__header">
               <div>
                 <h2>Moderation overview</h2>
@@ -1240,7 +1323,7 @@ const submitQuickAction = useCallback(
             </div>
           </section>
 
-          <section className="panel case-hub">
+          <section className="panel panel--compact case-hub">
             <header className="panel__header">
               <div>
                 <h2>Case inbox</h2>
@@ -1439,20 +1522,47 @@ const submitQuickAction = useCallback(
                       ) : (
                         <ul className="case-messages">
                           {caseDetail.messages.map((message) => {
-                            const role = (message.author?.role || 'member').toLowerCase()
+                            const profile =
+                              message && typeof message.author === 'object' && message.author !== null
+                                ? message.author
+                                : typeof message.authorProfile === 'object' && message.authorProfile !== null
+                                  ? message.authorProfile
+                                  : null
+                            const role = (
+                              profile?.role ||
+                              message.role ||
+                              message.authorRole ||
+                              message.authorType ||
+                              'member'
+                            ).toLowerCase()
+                            const displayName =
+                              profile?.displayName ||
+                              message.displayName ||
+                              message.authorTag ||
+                              message.authorLabel ||
+                              message.authorName ||
+                              (typeof message.author === 'string' ? message.author : '') ||
+                              'Member'
+                            const tag = profile?.tag || message.authorTag || null
+                            const roleLabel = role === 'moderator' ? 'Moderator' : role === 'system' ? 'System' : 'Member'
+                            const content = message.content ?? message.body ?? ''
                             return (
                               <li key={message.id || message.createdAt} className={`case-message case-message--${role}`}>
-                                <header>
-                                  <span className="case-message__author">
-                                    {message.author?.displayName || message.author?.tag || message.author?.id || 'Membro'}
-                                  </span>
+                                <div className="case-message__meta">
+                                  <div className="case-message__author">
+                                    <strong>{displayName}</strong>
+                                    {tag && tag !== displayName && (
+                                      <span className="case-message__tag">{tag}</span>
+                                    )}
+                                    <span className={`case-message__badge case-message__badge--${role}`}>{roleLabel}</span>
+                                  </div>
                                   {message.createdAt && (
-                                    <time dateTime={new Date(message.createdAt).toISOString()}>
+                                    <time className="case-message__time" dateTime={message.createdAt}>
                                       {formatDateTime(message.createdAt)}
                                     </time>
                                   )}
-                                </header>
-                                <p className="case-message__content">{message.content ?? ''}</p>
+                                </div>
+                                {content && <p className="case-message__content">{content}</p>}
                               </li>
                             )
                           })}
@@ -1504,7 +1614,9 @@ const submitQuickAction = useCallback(
         </div>
 
         <div className="moderation-page__column moderation-page__column--secondary">
-          <section className={`panel panel--collapsible ${collapsedPanels.quickActions ? 'panel--collapsed' : ''}`}>
+          <section
+            className={`panel panel--compact panel--scrollable panel--collapsible ${collapsedPanels.quickActions ? 'panel--collapsed' : ''}`}
+          >
             <header className="panel__header">
               <div>
                 <h2>Quick actions</h2>
@@ -1944,7 +2056,9 @@ const submitQuickAction = useCallback(
             </div>
           </section>
 
-          <section className={`panel panel--collapsible ${collapsedPanels.filters ? 'panel--collapsed' : ''}`}>
+          <section
+            className={`panel panel--compact panel--scrollable panel--collapsible ${collapsedPanels.filters ? 'panel--collapsed' : ''}`}
+          >
             <header className="panel__header">
               <div>
                 <h2>Filters</h2>
@@ -2015,7 +2129,9 @@ const submitQuickAction = useCallback(
             </div>
           </section>
 
-          <section className={`panel panel--collapsible ${collapsedPanels.spam ? 'panel--collapsed' : ''}`}>
+          <section
+            className={`panel panel--compact panel--scrollable panel--collapsible ${collapsedPanels.spam ? 'panel--collapsed' : ''}`}
+          >
             <header className="panel__header">
               <div>
                 <h2>Spam controls</h2>
@@ -2080,7 +2196,9 @@ const submitQuickAction = useCallback(
             </div>
           </section>
 
-          <section className={`panel panel--collapsible ${collapsedPanels.escalation ? 'panel--collapsed' : ''}`}>
+          <section
+            className={`panel panel--compact panel--scrollable panel--collapsible ${collapsedPanels.escalation ? 'panel--collapsed' : ''}`}
+          >
             <header className="panel__header">
               <div>
                 <h2>Escalation ladder</h2>
@@ -2145,7 +2263,9 @@ const submitQuickAction = useCallback(
             </div>
           </section>
 
-          <section className={`panel panel--collapsible ${collapsedPanels.alerts ? 'panel--collapsed' : ''}`}>
+          <section
+            className={`panel panel--compact panel--scrollable panel--collapsible ${collapsedPanels.alerts ? 'panel--collapsed' : ''}`}
+          >
             <header className="panel__header">
               <div>
                 <h2>Alerts &amp; notifications</h2>
@@ -2219,7 +2339,9 @@ const submitQuickAction = useCallback(
             </div>
           </section>
 
-          <section className={`panel panel--collapsible ${collapsedPanels.templates ? 'panel--collapsed' : ''}`}>
+          <section
+            className={`panel panel--compact panel--scrollable panel--collapsible ${collapsedPanels.templates ? 'panel--collapsed' : ''}`}
+          >
             <header className="panel__header">
               <div>
                 <h2>DM templates</h2>
@@ -2257,7 +2379,7 @@ const submitQuickAction = useCallback(
             </div>
           </section>
 
-          <section className="panel">
+          <section className="panel panel--compact">
             <header className="panel__header">
               <div>
                 <h2>Review &amp; save</h2>
