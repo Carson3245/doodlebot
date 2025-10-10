@@ -131,6 +131,29 @@ export default function ModerationPage() {
   const conversationLocked = isCaseTerminal(caseDetail.status)
   const archivedCase = isCaseArchived(caseDetail.status)
   const activeCaseTopic = resolveSupportTopic(caseDetail)
+  const caseSnapshot = useMemo(() => {
+    const snapshot = {
+      total: caseInbox.items.length,
+      active: 0,
+      awaiting: 0,
+      archived: 0
+    }
+
+    for (const entry of caseInbox.items) {
+      const status = getStatusValue(entry.status)
+      if (!isCaseTerminal(status)) {
+        snapshot.active += 1
+      }
+      if (status === 'pending-response') {
+        snapshot.awaiting += 1
+      }
+      if (isCaseArchived(status)) {
+        snapshot.archived += 1
+      }
+    }
+
+    return snapshot
+  }, [caseInbox.items])
   const [config, setConfig] = useState(null)
   const [keywordsInput, setKeywordsInput] = useState('')
   const [feedback, setFeedback] = useState('')
@@ -1290,43 +1313,38 @@ const submitQuickAction = useCallback(
   return (
     <div className="page moderation-page">
       <header className="moderation-page__header">
-        <div className="moderation-page__header-main">
-          <div className="moderation-page__header-copy">
-            <span className="moderation-page__kicker">Moderation</span>
-            <h1>Control room</h1>
-            <p>{headerSubtitle}</p>
-          </div>
-          <div className="moderation-page__header-actions">
-            <button
-              type="button"
-              className="button button--ghost"
-              onClick={loadStats}
-              disabled={stats.loading}
-            >
-              {stats.loading ? 'Refreshing…' : 'Refresh metrics'}
-            </button>
-          </div>
+        <div className="moderation-page__heading">
+          <h1>Moderation control center</h1>
+          <p>
+            Monitor escalations, keep conversations organised, and fine-tune automated protections from a single, calmer
+            workspace.
+          </p>
         </div>
-        <div className="moderation-page__header-grid" role="presentation">
-          <article className="moderation-page__meta-card">
-            <span className="moderation-page__meta-label">Workspace</span>
-            <strong>{guildLabel}</strong>
-            <p>{selectedGuild ? 'Moderation actions are scoped to this server.' : 'Connect a server to unlock moderation tooling.'}</p>
-          </article>
-          <article className="moderation-page__meta-card">
-            <span className="moderation-page__meta-label">Queue status</span>
-            <strong>{queueCountLabel}</strong>
-            <p>{queueSummary}</p>
-          </article>
-          <article className="moderation-page__meta-card">
-            <span className="moderation-page__meta-label">Last sync</span>
-            <strong>{lastSyncedDisplay}</strong>
-            <p>
-              {stats.loading
-                ? 'Pulling the latest automation metrics.'
-                : `Logged ${totalModerationActions} total actions.`}
-            </p>
-          </article>
+        <div className="moderation-page__status" aria-live="polite">
+          <div className="moderation-page__status-item">
+            <span className="moderation-page__status-label">Active cases</span>
+            <span className="moderation-page__status-value">
+              {caseInbox.loading ? '--' : caseSnapshot.active}
+            </span>
+          </div>
+          <div className="moderation-page__status-item">
+            <span className="moderation-page__status-label">Awaiting reply</span>
+            <span className="moderation-page__status-value">
+              {caseInbox.loading ? '--' : caseSnapshot.awaiting}
+            </span>
+          </div>
+          <div className="moderation-page__status-item">
+            <span className="moderation-page__status-label">Archived</span>
+            <span className="moderation-page__status-value">
+              {caseInbox.loading ? '--' : caseSnapshot.archived}
+            </span>
+          </div>
+          <div className="moderation-page__status-item">
+            <span className="moderation-page__status-label">Total cases</span>
+            <span className="moderation-page__status-value">
+              {caseInbox.loading ? '--' : caseSnapshot.total}
+            </span>
+          </div>
         </div>
       </header>
       <div className="moderation-page__layout">
@@ -1342,27 +1360,27 @@ const submitQuickAction = useCallback(
               </div>
             </header>
             <div className="panel__body stat-grid">
-              <article className="stat-card">
+              <article className="stat-card stat-card--compact">
                 <p className="stat-card__label">Automated bans</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.bans}</p>
                 <span className="stat-card__helper">Triggered by escalation rules</span>
               </article>
-              <article className="stat-card">
+              <article className="stat-card stat-card--compact">
                 <p className="stat-card__label">Timeouts applied</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.timeouts}</p>
                 <span className="stat-card__helper">Includes spam auto-timeouts</span>
               </article>
-              <article className="stat-card">
+              <article className="stat-card stat-card--compact">
                 <p className="stat-card__label">Members kicked</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.kicks}</p>
                 <span className="stat-card__helper">Manual removals logged</span>
               </article>
-              <article className="stat-card">
+              <article className="stat-card stat-card--compact">
                 <p className="stat-card__label">Logged warnings</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.warnings}</p>
                 <span className="stat-card__helper">Totals since last reset</span>
               </article>
-              <article className="stat-card">
+              <article className="stat-card stat-card--compact">
                 <p className="stat-card__label">Cases on record</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.cases}</p>
                 <span className="stat-card__helper">Stored in data/moderation/cases.json</span>
