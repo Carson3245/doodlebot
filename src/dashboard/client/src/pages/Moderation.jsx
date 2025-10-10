@@ -145,6 +145,19 @@ export default function ModerationPage() {
     alerts: true,
     templates: true
   }))
+  const headerSubtitle = selectedGuild
+    ? 'Monitor case triage, automation, and quick responses for your team.'
+    : 'Select a server to start coordinating moderation workflows.'
+  const guildLabel = selectedGuild?.name ?? 'No server selected'
+  const lastSyncedLabel = stats.updatedAt ? formatDateTime(stats.updatedAt) : 'Not synced yet'
+  const queueCountLabel = caseInbox.loading
+    ? 'Syncing…'
+    : `${caseInbox.items.length} ${caseInbox.items.length === 1 ? 'case' : 'cases'}`
+  const queueSummary = caseInbox.loading
+    ? 'Queue updating from your latest filters.'
+    : caseCountSummary
+  const lastSyncedDisplay = stats.loading ? 'Refreshing metrics…' : lastSyncedLabel
+  const totalModerationActions = stats.bans + stats.timeouts + stats.kicks + stats.warnings
 
   const togglePanel = useCallback((panel) => {
     setCollapsedPanels((previous) => ({
@@ -1276,6 +1289,46 @@ const submitQuickAction = useCallback(
 
   return (
     <div className="page moderation-page">
+      <header className="moderation-page__header">
+        <div className="moderation-page__header-main">
+          <div className="moderation-page__header-copy">
+            <span className="moderation-page__kicker">Moderation</span>
+            <h1>Control room</h1>
+            <p>{headerSubtitle}</p>
+          </div>
+          <div className="moderation-page__header-actions">
+            <button
+              type="button"
+              className="button button--ghost"
+              onClick={loadStats}
+              disabled={stats.loading}
+            >
+              {stats.loading ? 'Refreshing…' : 'Refresh metrics'}
+            </button>
+          </div>
+        </div>
+        <div className="moderation-page__header-grid" role="presentation">
+          <article className="moderation-page__meta-card">
+            <span className="moderation-page__meta-label">Workspace</span>
+            <strong>{guildLabel}</strong>
+            <p>{selectedGuild ? 'Moderation actions are scoped to this server.' : 'Connect a server to unlock moderation tooling.'}</p>
+          </article>
+          <article className="moderation-page__meta-card">
+            <span className="moderation-page__meta-label">Queue status</span>
+            <strong>{queueCountLabel}</strong>
+            <p>{queueSummary}</p>
+          </article>
+          <article className="moderation-page__meta-card">
+            <span className="moderation-page__meta-label">Last sync</span>
+            <strong>{lastSyncedDisplay}</strong>
+            <p>
+              {stats.loading
+                ? 'Pulling the latest automation metrics.'
+                : `Logged ${totalModerationActions} total actions.`}
+            </p>
+          </article>
+        </div>
+      </header>
       <div className="moderation-page__layout">
         <div className="moderation-page__column moderation-page__column--primary">
           <section className="panel panel--compact">
@@ -1285,13 +1338,7 @@ const submitQuickAction = useCallback(
                 <p>Monitor automated actions taken by the bot.</p>
               </div>
               <div className="panel__header-actions">
-                <p className="panel__meta">
-                  {stats.error
-                    ? stats.error
-                    : stats.updatedAt
-                      ? `Updated ${formatDateTime(stats.updatedAt)}`
-                      : 'Awaiting first update'}
-                </p>
+                <p className="panel__meta">{statsMetaLabel}</p>
               </div>
             </header>
             <div className="panel__body stat-grid">
