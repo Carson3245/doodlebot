@@ -89,6 +89,7 @@ export default function ModerationPage() {
   })
   const lookupTimers = useRef({})
   const caseMenuRef = useRef(null)
+  const caseConversationRef = useRef(null)
   const eventSourceRef = useRef(null)
   const reconnectTimerRef = useRef(null)
   const [quickActionTargets, setQuickActionTargets] = useState({
