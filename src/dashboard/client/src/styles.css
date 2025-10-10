@@ -418,16 +418,53 @@ body.auth-locked .app-shell {
   padding: 1.75rem;
 }
 
-.panel__header {
+.panel--collapsible {
+  gap: 1rem;
+}
+
+.panel__header--collapsible {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1.25rem;
 }
 
-.panel__header > div:first-child {
-  flex: 1;
-  min-width: 0;
+.panel__header--collapsible > div:first-child {
+  flex: 1 1 auto;
+}
+
+.panel__header-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  min-width: max-content;
+  text-align: right;
+}
+
+.panel__toggle {
+  font-size: 0.85rem;
+  padding-inline: 0.9rem;
+}
+
+.panel__meta {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 768px) {
+  .panel__header--collapsible {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .panel__header-controls {
+    align-items: stretch;
+  }
+
+  .panel__header-controls .panel__toggle {
+    align-self: flex-start;
+  }
 }
 
 .panel__header h2 {
