@@ -9,6 +9,11 @@ import { recordInteraction } from './brain/brainStore.js';
 import { getStyleSync, loadStyle } from './config/styleStore.js';
 import { getCommandSettings, incrementCommandUsage, loadCommandConfig } from './config/commandStore.js';
 import { ModerationEngine } from './moderation/moderationEngine.js';
+import {
+  handleSupportComponentInteraction,
+  handleSupportModalSubmit,
+  isSupportInteraction
+} from './support/supportWorkflow.js';
 
 const token = process.env.DISCORD_TOKEN;
 const clientId = process.env.CLIENT_ID;
@@ -46,6 +51,29 @@ async function bootstrap() {
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
+    try {
+      if (
+        (interaction.isStringSelectMenu() || interaction.isButton()) &&
+        isSupportInteraction(interaction)
+      ) {
+        await handleSupportComponentInteraction(interaction);
+        return;
+      }
+
+      if (interaction.isModalSubmit() && isSupportInteraction(interaction)) {
+        await handleSupportModalSubmit(interaction);
+        return;
+      }
+    } catch (error) {
+      console.error('Support interaction failed:', error);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction
+          .reply({ content: 'Something went wrong handling that request.', ephemeral: Boolean(interaction.inGuild?.()) })
+          .catch(() => {});
+      }
+      return;
+    }
+
     if (!interaction.isChatInputCommand()) {
       return;
     }
@@ -115,30 +143,7 @@ async function bootstrap() {
       }
 
       if (trimmed.startsWith('support')) {
-        if (!message.guild) {
-          await message.reply('Please run this command inside the server so I can reach the moderation team.');
-          return;
-        }
-
-        const request = content.slice(prefix.length + 'support'.length).trim();
-        try {
-          const member = message.member ?? (await message.guild.members.fetch(message.author.id).catch(() => null));
-          if (!member) {
-            await message.reply('I could not verify your membership in this server.');
-            return;
-          }
-
-          await moderation.postMemberMessage({
-            guild: message.guild,
-            member,
-            body: request || 'Member requested support.'
-          });
-
-          await message.reply('Thanks! I passed your request to the moderation team—they will reply here privately soon.');
-        } catch (error) {
-          console.error('Failed to forward support request:', error);
-          await message.reply('I could not forward that request just now. Please try again or ping a moderator.');
-        }
+        await message.reply('Use the `/support` command to open a ticket so we can capture the details and route it to the right team.');
         return;
       }
 

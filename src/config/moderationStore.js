@@ -27,6 +27,9 @@ const defaultModeration = {
     staffRoleId: null,
     notifyOnAutoAction: true
   },
+  support: {
+    intakeChannelId: null
+  },
   dmTemplates: {
     warn: 'You received a warning in {guild}. Reason: {reason}',
     timeout: 'You have been timed out in {guild} for {duration} minutes. Reason: {reason}',
@@ -95,6 +98,7 @@ function mergeModeration(partial = {}) {
     spam: mergeSpam(partial.spam ?? {}),
     escalation: mergeEscalation(partial.escalation ?? {}),
     alerts: mergeAlerts(partial.alerts ?? {}),
+    support: mergeSupport(partial.support ?? {}),
     dmTemplates: mergeTemplates(partial.dmTemplates ?? {})
   };
 }
@@ -138,6 +142,12 @@ function mergeAlerts(alerts) {
     staffRoleId: sanitizeId(alerts.staffRoleId),
     notifyOnAutoAction:
       alerts.notifyOnAutoAction !== undefined ? Boolean(alerts.notifyOnAutoAction) : defaultModeration.alerts.notifyOnAutoAction
+  };
+}
+
+function mergeSupport(support) {
+  return {
+    intakeChannelId: sanitizeId(support.intakeChannelId)
   };
 }
 

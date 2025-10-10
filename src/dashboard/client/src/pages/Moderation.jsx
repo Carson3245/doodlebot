@@ -49,7 +49,10 @@ function createEmptyCaseDetail() {
     error: null,
     sending: false,
     statusUpdating: false,
-    unreadCount: 0
+    unreadCount: 0,
+    category: 'moderation',
+    ticketType: null,
+    metadata: {}
   }
 }
 
@@ -67,6 +70,12 @@ const CASE_FILTER_OPTIONS = [
   { value: 'closed', label: 'Closed' },
   { value: 'archived', label: 'Archived' },
   { value: 'all', label: 'All cases' }
+]
+
+const CASE_CATEGORY_OPTIONS = [
+  { value: 'all', label: 'All categories' },
+  { value: 'moderation', label: 'Moderation cases' },
+  { value: 'ticket', label: 'Tickets' }
 ]
 
 export default function ModerationPage() {
@@ -109,12 +118,15 @@ export default function ModerationPage() {
   const [caseReply, setCaseReply] = useState('')
   const [caseMenuOpen, setCaseMenuOpen] = useState(false)
   const [caseFilter, setCaseFilter] = useState('active')
+  const [caseCategoryFilter, setCaseCategoryFilter] = useState('all')
   const caseCountSummary = useMemo(
-    () => formatCaseFilterSummary(caseFilter, caseInbox.items.length),
-    [caseFilter, caseInbox.items.length]
+    () =>
+      `${formatCaseFilterSummary(caseFilter, caseInbox.items.length)} • ${formatCaseCategorySummary(caseCategoryFilter)}`,
+    [caseFilter, caseCategoryFilter, caseInbox.items.length]
   )
   const conversationLocked = isCaseTerminal(caseDetail.status)
   const archivedCase = isCaseArchived(caseDetail.status)
+  const activeCaseTopic = resolveSupportTopic(caseDetail)
   const [config, setConfig] = useState(null)
   const [keywordsInput, setKeywordsInput] = useState('')
   const [feedback, setFeedback] = useState('')
@@ -221,6 +233,9 @@ export default function ModerationPage() {
       if (statusParam && statusParam !== 'all') {
         params.set('status', statusParam)
       }
+      if (caseCategoryFilter && caseCategoryFilter !== 'all') {
+        params.set('category', caseCategoryFilter)
+      }
       const query = params.toString()
       const response = await fetch(`/api/moderation/cases${query ? `?${query}` : ''}`)
       if (response.status === 401) {
@@ -233,7 +248,7 @@ export default function ModerationPage() {
       const data = await response.json()
       setCaseInbox((prev) => {
         const rawItems = Array.isArray(data) ? data : []
-        const filteredItems = applyCaseFilter(rawItems, caseFilter)
+        const filteredItems = applyCaseFilter(rawItems, caseFilter, caseCategoryFilter)
         const hasCurrent =
           prev.selectedCaseId && filteredItems.some((item) => item.id === prev.selectedCaseId)
         const nextSelectedCaseId = hasCurrent ? prev.selectedCaseId : filteredItems[0]?.id ?? null
@@ -258,7 +273,7 @@ export default function ModerationPage() {
         error: 'Unable to load moderation cases.'
       }))
     }
-  }, [authenticated, caseFilter, refreshAuth, selectedGuild?.id])
+  }, [authenticated, caseCategoryFilter, caseFilter, refreshAuth, selectedGuild?.id])
 
   const loadCaseDetail = useCallback(
     async (caseId, guildId) => {
@@ -290,13 +305,28 @@ export default function ModerationPage() {
           error: null,
           sending: false,
           statusUpdating: false,
-          unreadCount: data?.unreadCount ?? 0
+          unreadCount: data?.unreadCount ?? 0,
+          category: data?.category ?? 'moderation',
+          ticketType: data?.ticketType ?? null,
+          metadata: typeof data?.metadata === 'object' && data.metadata !== null ? data.metadata : {}
         })
         setCaseReply('')
         setCaseInbox((prev) => ({
           ...prev,
           items: prev.items.map((item) =>
-            item.id === caseId ? { ...item, unreadCount: 0, status: data?.status ?? item.status } : item
+            item.id === caseId
+              ? {
+                  ...item,
+                  unreadCount: 0,
+                  status: data?.status ?? item.status,
+                  category: data?.category ?? item.category ?? 'moderation',
+                  ticketType: data?.ticketType ?? item.ticketType ?? null,
+                  metadata:
+                    typeof data?.metadata === 'object' && data.metadata !== null
+                      ? data.metadata
+                      : item.metadata ?? {}
+                }
+              : item
           ),
           selectedCaseGuildId: guildId
         }))
@@ -1035,6 +1065,7 @@ const submitQuickAction = useCallback(
   const escalation = config?.escalation ?? {}
   const alerts = config?.alerts ?? {}
   const dmTemplates = config?.dmTemplates ?? {}
+  const support = config?.support ?? {}
 
   const handleToggleFilter = (key) => {
     setConfig((prev) => ({
@@ -1071,6 +1102,16 @@ const submitQuickAction = useCallback(
       ...prev,
       alerts: {
         ...prev.alerts,
+        [key]: value
+      }
+    }))
+  }
+
+  const handleSupportChange = (key, value) => {
+    setConfig((prev) => ({
+      ...prev,
+      support: {
+        ...(prev.support ?? {}),
         [key]: value
       }
     }))
@@ -1224,6 +1265,22 @@ const submitQuickAction = useCallback(
                     </option>
                   ))}
                 </select>
+                <label className="visually-hidden" htmlFor="case-category-filter">
+                  Filter by category
+                </label>
+                <select
+                  id="case-category-filter"
+                  className="case-hub__filter"
+                  value={caseCategoryFilter}
+                  onChange={(event) => setCaseCategoryFilter(event.target.value)}
+                  disabled={caseInbox.loading}
+                >
+                  {CASE_CATEGORY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
                   className="button button--ghost"
@@ -1241,7 +1298,7 @@ const submitQuickAction = useCallback(
                 ) : caseInbox.error ? (
                   <p className="placeholder">{caseInbox.error}</p>
                 ) : caseInbox.items.length === 0 ? (
-                  <p className="placeholder">{formatEmptyCaseMessage(caseFilter)}</p>
+                  <p className="placeholder">{formatEmptyCaseMessage(caseFilter, caseCategoryFilter)}</p>
                 ) : (
                   <ul className="case-hub__items">
                     {caseInbox.items.map((item) => {
@@ -1249,6 +1306,8 @@ const submitQuickAction = useCallback(
                       const participant =
                         item.memberTag || item.userTag || item.memberName || item.userName || item.userId
                       const lastUpdate = item.updatedAt || item.createdAt
+                      const categoryValue = getCaseCategory(item)
+                      const topicLabel = resolveSupportTopic(item)
                       return (
                         <li key={item.id}>
                           <button
@@ -1257,6 +1316,12 @@ const submitQuickAction = useCallback(
                             onClick={() => handleSelectCase(item.id)}
                           >
                             <span className="case-card__title">{item.subject || item.reason || `Case ${item.id}`}</span>
+                            <div className="case-card__meta">
+                              <span className={`case-pill case-pill--${categoryValue}`}>
+                                {formatCaseCategoryLabel(categoryValue)}
+                              </span>
+                              {topicLabel && <span className="case-pill case-pill--muted">{topicLabel}</span>}
+                            </div>
                             <span className="case-card__participant">{participant || 'Unknown member'}</span>
                             <div className="case-card__footer">
                               <span className={`case-status case-status--${(item.status || 'open').toLowerCase()}`}>
@@ -1295,6 +1360,14 @@ const submitQuickAction = useCallback(
                             : 'Waiting for case details'}
                           {caseDetail.openedAt ? ` • ${formatDateTime(caseDetail.openedAt)}` : ''}
                         </p>
+                        <div className="case-hub__tags">
+                          <span className={`case-pill case-pill--${getCaseCategory(caseDetail)}`}>
+                            {formatCaseCategoryLabel(caseDetail.category)}
+                          </span>
+                          {activeCaseTopic && (
+                            <span className="case-pill case-pill--muted">{activeCaseTopic}</span>
+                          )}
+                        </div>
                       </div>
                       <div className="case-hub__conversation-tools">
                         <button
@@ -1328,6 +1401,20 @@ const submitQuickAction = useCallback(
                         )}
                       </div>
                     </header>
+                    {(caseDetail.metadata?.reason || caseDetail.metadata?.supportContext) && (
+                      <div className="case-hub__summary-card">
+                        {caseDetail.metadata?.reason && (
+                          <p>
+                            <strong>Member request:</strong> {caseDetail.metadata.reason}
+                          </p>
+                        )}
+                        {caseDetail.metadata?.supportContext && (
+                          <p className="case-hub__summary-meta">
+                            <strong>Requested via:</strong> {formatSupportOrigin(caseDetail.metadata.supportContext)}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     <div className="case-hub__participants">
                       {caseDetail.participants.length > 0 ? (
                         <ul>
@@ -2093,6 +2180,17 @@ const submitQuickAction = useCallback(
                     <p className="form-helper">Where automod events are posted.</p>
                   </div>
                   <div className="form-row">
+                    <label htmlFor="support-channel">Support intake channel ID</label>
+                    <input
+                      id="support-channel"
+                      type="text"
+                      placeholder="1234567890"
+                      value={support.intakeChannelId ?? ''}
+                      onChange={(event) => handleSupportChange('intakeChannelId', event.target.value)}
+                    />
+                    <p className="form-helper">New /support tickets will post here for the team.</p>
+                  </div>
+                  <div className="form-row">
                     <label htmlFor="staff-role">Staff role ID</label>
                     <input
                       id="staff-role"
@@ -2221,28 +2319,64 @@ function isCaseArchived(status) {
   return getStatusValue(status) === 'archived'
 }
 
-function applyCaseFilter(items, filter) {
+function getCaseCategory(entry) {
+  const value = String(entry?.category ?? 'moderation').toLowerCase()
+  return value === 'ticket' ? 'ticket' : 'moderation'
+}
+
+function resolveSupportTopic(entry) {
+  if (!entry || typeof entry !== 'object') {
+    return null
+  }
+  const metadata = entry.metadata
+  if (metadata && typeof metadata === 'object') {
+    if (metadata.supportTopic) {
+      return metadata.supportTopic
+    }
+    if (metadata.topic) {
+      return metadata.topic
+    }
+  }
+  return null
+}
+
+function applyCaseFilter(items, filter, categoryFilter) {
   if (!Array.isArray(items)) {
     return []
   }
   const value = String(filter ?? 'all').toLowerCase()
+  let filtered = []
   switch (value) {
     case 'active':
-      return items.filter((item) => !isCaseTerminal(item.status))
+      filtered = items.filter((item) => !isCaseTerminal(item.status))
+      break
     case 'archived':
-      return items.filter((item) => isCaseArchived(item.status))
+      filtered = items.filter((item) => isCaseArchived(item.status))
+      break
     case 'closed':
-      return items.filter((item) => getStatusValue(item.status) === 'closed')
+      filtered = items.filter((item) => getStatusValue(item.status) === 'closed')
+      break
     case 'open':
-      return items.filter((item) => getStatusValue(item.status) === 'open')
+      filtered = items.filter((item) => getStatusValue(item.status) === 'open')
+      break
     case 'pending-response':
-      return items.filter((item) => getStatusValue(item.status) === 'pending-response')
+      filtered = items.filter((item) => getStatusValue(item.status) === 'pending-response')
+      break
     case 'escalated':
-      return items.filter((item) => getStatusValue(item.status) === 'escalated')
+      filtered = items.filter((item) => getStatusValue(item.status) === 'escalated')
+      break
     case 'all':
     default:
-      return [...items]
+      filtered = [...items]
+      break
   }
+
+  const categoryValue = String(categoryFilter ?? 'all').toLowerCase()
+  if (categoryValue !== 'all') {
+    filtered = filtered.filter((item) => getCaseCategory(item) === categoryValue)
+  }
+
+  return filtered
 }
 
 function resolveCaseFilterParam(filter) {
@@ -2275,23 +2409,79 @@ function formatCaseFilterSummary(filter, count) {
   }
 }
 
-function formatEmptyCaseMessage(filter) {
-  const value = String(filter ?? 'all').toLowerCase()
+function formatCaseCategorySummary(category) {
+  const value = String(category ?? 'all').toLowerCase()
+  switch (value) {
+    case 'ticket':
+      return 'Tickets only'
+    case 'moderation':
+      return 'Moderation cases only'
+    default:
+      return 'All categories'
+  }
+}
+
+function formatCaseCategoryLabel(category) {
+  const value = String(category ?? 'moderation').toLowerCase()
+  return value === 'ticket' ? 'Ticket' : 'Moderation'
+}
+
+function formatEmptyCaseMessage(statusFilter, categoryFilter) {
+  const value = String(statusFilter ?? 'all').toLowerCase()
+  let message
   switch (value) {
     case 'active':
-      return 'No active cases. Members can start a conversation through the bot.'
+      message = 'No active cases. Members can start a conversation through the bot.'
+      break
     case 'open':
-      return 'No open cases.'
+      message = 'No open cases.'
+      break
     case 'archived':
-      return 'No archived cases.'
+      message = 'No archived cases.'
+      break
     case 'closed':
-      return 'No closed cases.'
+      message = 'No closed cases.'
+      break
     case 'pending-response':
-      return 'No cases awaiting a member response.'
+      message = 'No cases awaiting a member response.'
+      break
     case 'escalated':
-      return 'No escalated cases.'
+      message = 'No escalated cases.'
+      break
     case 'all':
     default:
-      return 'No cases found.'
+      return formatEmptyCaseCategoryMessage(categoryFilter)
   }
+
+  if (categoryFilter && String(categoryFilter).toLowerCase() !== 'all') {
+    const label = String(categoryFilter).toLowerCase() === 'ticket' ? 'tickets' : 'moderation cases'
+    return `${message.replace(/\.$/, '')} for ${label}.`
+  }
+
+  return message
+}
+
+function formatEmptyCaseCategoryMessage(categoryFilter) {
+  const category = String(categoryFilter ?? 'all').toLowerCase()
+  if (category === 'ticket') {
+    return 'No tickets found. Encourage members to use the /support command.'
+  }
+  if (category === 'moderation') {
+    return 'No moderation cases match the current filters.'
+  }
+  return 'No cases found.'
+}
+
+function formatSupportOrigin(origin) {
+  const value = String(origin ?? '').toLowerCase()
+  if (value === 'dm' || value === 'direct') {
+    return 'Direct message'
+  }
+  if (value === 'guild' || value === 'slash' || value === 'server') {
+    return 'Server command'
+  }
+  if (value === 'member') {
+    return 'Member message'
+  }
+  return 'Support system'
 }

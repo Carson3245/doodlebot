@@ -43,10 +43,12 @@ export class ModerationEngine {
     this.spamBuckets = new Map()
     this.profanity = new Set(DEFAULT_PROFANITY)
     this.logChannelCache = new Map()
+    this.supportChannelCache = new Map()
 
     onModerationConfigChange((config) => {
       this.config = config
       this.logChannelCache.clear()
+      this.supportChannelCache.clear()
     })
   }
 
@@ -539,14 +541,91 @@ export class ModerationEngine {
     if (!guild || !member) {
       throw new Error('Guild and member are required')
     }
-    return ensureMemberCase({
+    const result = await ensureMemberCase({
       guildId: guild.id,
       guildName: guild.name ?? null,
       userId: member.id,
       userTag: member.user?.tag ?? null,
       reason,
-      initialMessage
+      initialMessage,
+      category: 'moderation'
     })
+    return result.case
+  }
+
+  async openSupportRequest({
+    guildId,
+    userId,
+    requestedById,
+    requestedByTag,
+    category = 'ticket',
+    topicId = null,
+    topicLabel = null,
+    reason,
+    origin = 'slash',
+    intakeChannelId = null
+  }) {
+    await this.init()
+    if (!guildId || !userId) {
+      throw new Error('Guild and user are required to open a support request')
+    }
+
+    const normalizedCategory = category === 'ticket' ? 'ticket' : 'moderation'
+    const context = await this.resolveContext({ guildId, userId, fetchMemberOptional: false })
+    if (!context || !context.guild || !context.member) {
+      throw new Error('Unable to resolve member for support request')
+    }
+
+    const { guild, member } = context
+    const trimmedReason = typeof reason === 'string' ? reason.trim() : ''
+    const initialMessage = trimmedReason.length
+      ? trimmedReason
+      : normalizedCategory === 'ticket'
+        ? 'Member opened a support ticket.'
+        : 'Member requested moderation assistance.'
+
+    const supportConfig = this.config.support ?? {}
+    const targetChannelId = intakeChannelId ?? supportConfig.intakeChannelId ?? null
+
+    const ensured = await ensureMemberCase({
+      guildId: guild.id,
+      guildName: guild.name ?? null,
+      userId: member.id,
+      userTag: member.user?.tag ?? null,
+      reason: trimmedReason.length ? trimmedReason : null,
+      initialMessage,
+      category: normalizedCategory,
+      ticketType: topicId,
+      supportTopicLabel: topicLabel,
+      supportContext: origin,
+      source: 'support',
+      allowExisting: false,
+      intakeChannelId: targetChannelId
+    })
+
+    const caseEntry = ensured.case
+    const message = ensured.message ?? caseEntry.messages?.[caseEntry.messages.length - 1] ?? null
+
+    await this.notifyStaffOfMemberMessage({
+      guildId: guild.id,
+      memberDisplay: member?.toString?.() ?? member.user?.tag ?? member.id,
+      caseEntry
+    })
+
+    await this.sendSupportIntakeMessage({
+      guild,
+      member,
+      caseEntry,
+      channelId: targetChannelId,
+      topicLabel,
+      reason: trimmedReason,
+      category: normalizedCategory,
+      requestedById,
+      requestedByTag,
+      origin
+    })
+
+    return { case: caseEntry, message, created: ensured.created, intakeChannelId: targetChannelId }
   }
 
   async postModeratorMessage({ guildId, caseId, moderatorId, moderatorTag, body }) {
@@ -601,13 +680,15 @@ export class ModerationEngine {
       return null
     }
 
-    const caseEntry = await ensureMemberCase({
+    const ensured = await ensureMemberCase({
       guildId: guild.id,
       guildName: guild.name ?? null,
       userId: member.id,
       userTag: member.user?.tag ?? null,
-      initialMessage: null
+      initialMessage: null,
+      category: 'moderation'
     })
+    const caseEntry = ensured.case
 
     const message = await appendCaseMessage({
       guildId: guild.id,
@@ -658,14 +739,16 @@ export class ModerationEngine {
     if (!caseEntry) {
       const mutualGuilds = await this.findMemberGuilds(user.id)
       for (const { guild, member } of mutualGuilds) {
-        caseEntry = await ensureMemberCase({
+        const ensured = await ensureMemberCase({
           guildId: guild.id,
           guildName: guild.name ?? null,
           userId: user.id,
           userTag: resolveUserTag(user),
-          initialMessage: finalBody
+          initialMessage: finalBody,
+          category: 'moderation'
         })
-        const message = caseEntry.messages?.[caseEntry.messages.length - 1] ?? null
+        caseEntry = ensured.case
+        const message = ensured.message ?? caseEntry.messages?.[caseEntry.messages.length - 1] ?? null
         await this.notifyStaffOfMemberMessage({
           guildId: guild.id,
           memberDisplay: member?.toString?.() ?? resolveUserTag(user) ?? user.id,
@@ -695,9 +778,9 @@ export class ModerationEngine {
     return { caseEntry, message }
   }
 
-  async listCasesForGuild(guildId, { status = 'all', limit = 50 } = {}) {
+  async listCasesForGuild(guildId, { status = 'all', category = 'all', limit = 50 } = {}) {
     await this.init()
-    return listCases({ guildId, status, limit })
+    return listCases({ guildId, status, category, limit })
   }
 
   async getCase(caseId) {
@@ -850,10 +933,11 @@ export class ModerationEngine {
             : 'a member'
     const guildName = logGuild.name ?? 'the server'
     const caseId = caseEntry?.id ?? 'unknown'
+    const categoryLabel = caseEntry?.category === 'ticket' ? 'ticket' : 'case'
 
     await channel
       .send(
-        `${mention} New support message from ${display} in ${guildName}. Open case ${caseId} in the dashboard.`
+        `${mention} New ${categoryLabel} update from ${display} in ${guildName}. Open case ${caseId} in the dashboard.`
       )
       .catch(() => {})
   }
@@ -877,6 +961,100 @@ export class ModerationEngine {
     }
 
     return channel
+  }
+
+  async getSupportChannel(guild, channelId) {
+    if (!channelId) {
+      return null
+    }
+    const cacheKey = `${guild.id}:${channelId}`
+    if (this.supportChannelCache.has(cacheKey)) {
+      return this.supportChannelCache.get(cacheKey)
+    }
+
+    const channel =
+      guild.channels?.fetch
+        ? await guild.channels.fetch(channelId).catch(() => null)
+        : await this.client.channels.fetch(channelId).catch(() => null)
+
+    if (channel) {
+      this.supportChannelCache.set(cacheKey, channel)
+    }
+
+    return channel
+  }
+
+  async sendSupportIntakeMessage({
+    guild,
+    member,
+    caseEntry,
+    channelId,
+    topicLabel,
+    reason,
+    category,
+    requestedById,
+    requestedByTag,
+    origin
+  }) {
+    if (!guild || !channelId) {
+      return
+    }
+
+    const channel = await this.getSupportChannel(guild, channelId)
+    if (!channel || !channel.isTextBased()) {
+      return
+    }
+
+    const alerts = this.config.alerts ?? {}
+    const mention = null
+    const color = category === 'ticket' ? 0x4f86f7 : 0xffb020
+    const description = reason && reason.length ? reason : 'No description provided.'
+
+    const embed = new EmbedBuilder()
+      .setTitle(category === 'ticket' ? 'New support ticket' : 'New moderation case request')
+      .setColor(color)
+      .setDescription(description)
+      .setTimestamp(caseEntry?.createdAt ? new Date(caseEntry.createdAt) : new Date())
+      .addFields(
+        {
+          name: 'Member',
+          value:
+            member?.toString?.() ??
+            (member?.user?.tag ? `${member.user.tag} (${member.id})` : `<@${member?.id ?? 'unknown'}>`),
+          inline: false
+        },
+        {
+          name: 'Category',
+          value: category === 'ticket' ? 'Ticket' : 'Moderation case',
+          inline: true
+        }
+      )
+
+    if (topicLabel) {
+      embed.addFields({ name: 'Topic', value: topicLabel, inline: true })
+    }
+
+    if (caseEntry?.id) {
+      embed.addFields({ name: 'Case ID', value: caseEntry.id, inline: true })
+    }
+
+    const openedByDifferent = requestedById && requestedById !== member?.id
+    if (openedByDifferent) {
+      const display = requestedByTag ? `${requestedByTag} (${requestedById})` : `<@${requestedById}>`
+      embed.addFields({ name: 'Requested by', value: display, inline: true })
+    }
+
+    embed.addFields({
+      name: 'Origin',
+      value: origin === 'dm' ? 'Direct message' : 'In-server command',
+      inline: true
+    })
+
+    try {
+      await channel.send({ content: mention ?? undefined, embeds: [embed] })
+    } catch (error) {
+      console.error('Failed to post support intake message:', error)
+    }
   }
 
   async findMemberGuilds(userId) {

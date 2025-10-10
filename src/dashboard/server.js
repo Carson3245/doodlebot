@@ -338,8 +338,9 @@ export function createDashboard(client, moderation) {
     }
     try {
       const status = typeof req.query.status === 'string' ? req.query.status : 'all';
+      const category = typeof req.query.category === 'string' ? req.query.category : 'all';
       const limit = req.query.limit ? Number(req.query.limit) : 50;
-      const cases = await moderation.listCasesForGuild(req.params.guildId, { status, limit });
+      const cases = await moderation.listCasesForGuild(req.params.guildId, { status, category, limit });
       res.json(cases);
     } catch (error) {
       console.error('Failed to list cases:', error);
@@ -668,8 +669,9 @@ export function createDashboard(client, moderation) {
       const guildId = sanitizeSnowflake(req.query.guildId);
       const limit = req.query.limit ? Number(req.query.limit) : 50;
       const status = typeof req.query.status === 'string' ? req.query.status : 'all';
+      const category = typeof req.query.category === 'string' ? req.query.category : 'all';
       if (guildId) {
-        const cases = await moderation.listCasesForGuild(guildId, { status, limit });
+        const cases = await moderation.listCasesForGuild(guildId, { status, category, limit });
         res.json(cases);
       } else {
         const cases = await moderation.getRecentCases(limit);

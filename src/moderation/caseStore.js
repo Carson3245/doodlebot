@@ -144,27 +144,80 @@ export async function ensureMemberCase({
   userId,
   userTag,
   reason,
-  initialMessage
+  initialMessage,
+  category = 'moderation',
+  ticketType = null,
+  supportTopicLabel = null,
+  supportContext = null,
+  allowExisting = true,
+  source = 'member',
+  intakeChannelId = null,
+  intakeThreadId = null,
+  intakeMessageId = null
 }) {
   if (!guildId || !userId) {
     throw new Error('guildId and userId are required to open a member case')
   }
   const data = await loadData()
   const now = new Date().toISOString()
+  const normalizedCategory = normalizeCategory(category)
 
-  const existing = data.cases.find(
-    (item) =>
-      item.guildId === String(guildId) &&
-      item.userId === String(userId) &&
-      !isTerminalStatus(item.status)
-  )
+  const existing =
+    allowExisting === false
+      ? null
+      : data.cases.find(
+          (item) =>
+            item.guildId === String(guildId) &&
+            item.userId === String(userId) &&
+            !isTerminalStatus(item.status) &&
+            normalizeCategory(item.category) === normalizedCategory
+        )
 
   if (existing) {
+    let updated = false
     ensureParticipant(existing, {
       type: 'member',
       id: String(userId),
       tag: userTag ?? null
     })
+    if (reason && (!existing.metadata || !existing.metadata.reason)) {
+      existing.metadata = buildInitialMetadata({ metadata: existing.metadata, reason })
+      updated = true
+    }
+    if (supportTopicLabel) {
+      existing.metadata = buildInitialMetadata({
+        metadata: existing.metadata,
+        supportTopicLabel,
+        reason: existing.metadata?.reason ?? reason ?? null,
+        supportContext: supportContext ?? existing.metadata?.supportContext ?? null
+      })
+      updated = true
+    }
+    if (supportContext && existing.metadata?.supportContext !== supportContext) {
+      existing.metadata = buildInitialMetadata({
+        metadata: existing.metadata,
+        supportContext,
+        reason: existing.metadata?.reason ?? reason ?? null,
+        supportTopicLabel: supportTopicLabel ?? existing.metadata?.supportTopic ?? null
+      })
+      updated = true
+    }
+    if (ticketType && existing.ticketType !== String(ticketType)) {
+      existing.ticketType = String(ticketType)
+      updated = true
+    }
+    if (intakeChannelId && existing.intakeChannelId !== String(intakeChannelId)) {
+      existing.intakeChannelId = String(intakeChannelId)
+      updated = true
+    }
+    if (intakeThreadId && existing.intakeThreadId !== String(intakeThreadId)) {
+      existing.intakeThreadId = String(intakeThreadId)
+      updated = true
+    }
+    if (intakeMessageId && existing.intakeMessageId !== String(intakeMessageId)) {
+      existing.intakeMessageId = String(intakeMessageId)
+      updated = true
+    }
     if (initialMessage) {
       const message = createMessage({
         authorType: 'member',
@@ -174,12 +227,18 @@ export async function ensureMemberCase({
         via: 'member'
       })
       registerCaseMessage(data, existing, message)
-      applyCaseStatus(data, existing, 'pending-response', {
-        type: 'member',
-        id: String(userId),
-        tag: userTag ?? null,
-        note: 'Member sent a new message when opening the case.'
-      }, message.createdAt)
+      applyCaseStatus(
+        data,
+        existing,
+        'pending-response',
+        {
+          type: 'member',
+          id: String(userId),
+          tag: userTag ?? null,
+          note: 'Member sent a new message when opening the case.'
+        },
+        message.createdAt
+      )
       await persistData(data)
       emitStoreEvent('case:message', {
         guildId: existing.guildId,
@@ -188,10 +247,23 @@ export async function ensureMemberCase({
       })
       emitStoreEvent('cases:updated', summarizeCaseUpdate(existing))
       emitStoreEvent('stats:updated', buildStatsSnapshot(data))
-      return existing
+      return { case: existing, created: false, message }
     }
-    return existing
+    if (updated) {
+      existing.updatedAt = now
+      data.updatedAt = now
+      await persistData(data)
+      emitStoreEvent('cases:updated', summarizeCaseUpdate(existing))
+    }
+    return { case: existing, created: false, message: null }
   }
+
+  const metadata = buildInitialMetadata({
+    metadata: {},
+    reason,
+    supportTopicLabel,
+    supportContext
+  })
 
   const newCase = createCaseShell({
     guildId,
@@ -205,21 +277,28 @@ export async function ensureMemberCase({
       at: now,
       reason: reason ?? null
     },
-    source: 'member',
-    status: initialMessage ? 'pending-response' : 'open'
+    source: source ?? 'member',
+    status: initialMessage ? 'pending-response' : 'open',
+    category: normalizedCategory,
+    ticketType,
+    metadata,
+    intakeChannelId,
+    intakeThreadId,
+    intakeMessageId
   })
-
-  if (reason) {
-    newCase.metadata.reason = reason
-  }
 
   ensureParticipant(newCase, {
     type: 'member',
     id: String(userId),
     tag: userTag ?? null
   })
-  assignCaseSubject(newCase, { reason })
+  assignCaseSubject(newCase, {
+    reason,
+    supportTopicLabel,
+    category: normalizedCategory
+  })
 
+  let appendedMessage = null
   if (initialMessage) {
     const message = createMessage({
       authorType: 'member',
@@ -235,6 +314,7 @@ export async function ensureMemberCase({
       tag: userTag ?? null,
       note: 'Member opened a new support case.'
     }, message.createdAt)
+    appendedMessage = message
   }
 
   newCase.lastMessageAt = newCase.messages[0]?.createdAt ?? now
@@ -255,7 +335,31 @@ export async function ensureMemberCase({
   }
   emitStoreEvent('cases:updated', summarizeCaseUpdate(newCase))
   emitStoreEvent('stats:updated', buildStatsSnapshot(data))
-  return newCase
+  return { case: newCase, created: true, message: appendedMessage }
+}
+
+export async function findActiveCaseForMember(userId) {
+  if (!userId) {
+    return null
+  }
+
+  const data = await loadData()
+  const key = String(userId)
+  const candidates = data.cases
+    .filter((entry) => entry.userId === key)
+    .sort((left, right) => {
+      const leftTimestamp = left.lastMessageAt ?? left.updatedAt ?? left.createdAt ?? ''
+      const rightTimestamp = right.lastMessageAt ?? right.updatedAt ?? right.createdAt ?? ''
+      return rightTimestamp.localeCompare(leftTimestamp)
+    })
+
+  if (!candidates.length) {
+    return null
+  }
+
+  const active = candidates.find((entry) => !isTerminalStatus(entry.status ?? DEFAULT_STATUS))
+  const selected = active ?? candidates[0]
+  return { ...selected }
 }
 
 export async function findActiveCaseForMember(userId) {
@@ -407,7 +511,7 @@ export async function deleteCase({ guildId, caseId, actorId, actorTag, actorType
   return removed
 }
 
-export async function listCases({ guildId, status, limit = 50 }) {
+export async function listCases({ guildId, status, category = 'all', limit = 50 }) {
   const data = await loadData()
   let items = data.cases.filter((item) => item.guildId === String(guildId))
   if (status && status !== 'all') {
@@ -416,6 +520,12 @@ export async function listCases({ guildId, status, limit = 50 }) {
       return []
     }
     items = items.filter((item) => item.status === normalized)
+  }
+  const normalizedCategory = String(category ?? 'all').toLowerCase().trim()
+  if (normalizedCategory && normalizedCategory !== 'all') {
+    items = items.filter(
+      (item) => normalizeCategory(item.category) === normalizeCategory(normalizedCategory)
+    )
   }
   return items.slice(0, Math.max(0, Math.min(limit, MAX_CASES)))
 }
@@ -483,7 +593,9 @@ function summarizeCaseUpdate(caseEntry) {
     subject: caseEntry.subject ?? null,
     userId: caseEntry.userId ?? null,
     userTag: caseEntry.userTag ?? null,
-    lastMessageAt: caseEntry.lastMessageAt ?? null
+    lastMessageAt: caseEntry.lastMessageAt ?? null,
+    category: normalizeCategory(caseEntry.category),
+    ticketType: caseEntry.ticketType ?? null
   }
 }
 
@@ -511,6 +623,8 @@ function getOrCreateActiveCase(data, entry, now) {
     userTag: entry.userTag,
     status: normalizeStatus(entry.status) ?? DEFAULT_STATUS,
     source: entry.source ?? 'system',
+    category: 'moderation',
+    metadata: buildInitialMetadata(entry),
     openedBy: {
       type: entry.moderatorId ? 'moderator' : 'system',
       id: entry.moderatorId ? String(entry.moderatorId) : 'system',
@@ -539,7 +653,22 @@ function getOrCreateActiveCase(data, entry, now) {
   return { caseEntry: newCase, created: true }
 }
 
-function createCaseShell({ guildId, guildName, userId, userTag, status, source, openedBy }) {
+function createCaseShell({
+  guildId,
+  guildName,
+  userId,
+  userTag,
+  status,
+  source,
+  openedBy,
+  category,
+  ticketType,
+  metadata,
+  subject,
+  intakeChannelId,
+  intakeThreadId,
+  intakeMessageId
+}) {
   const now = new Date().toISOString()
   return {
     id: createId(),
@@ -549,7 +678,12 @@ function createCaseShell({ guildId, guildName, userId, userTag, status, source, 
     userTag: userTag ?? null,
     status: status ?? 'open',
     source: source ?? 'system',
-    metadata: {},
+    category: normalizeCategory(category),
+    ticketType: ticketType ? String(ticketType) : null,
+    intakeChannelId: intakeChannelId ? String(intakeChannelId) : null,
+    intakeThreadId: intakeThreadId ? String(intakeThreadId) : null,
+    intakeMessageId: intakeMessageId ? String(intakeMessageId) : null,
+    metadata: typeof metadata === 'object' && metadata !== null ? { ...metadata } : {},
     openedBy: openedBy ?? {
       type: 'system',
       id: 'system',
@@ -558,7 +692,7 @@ function createCaseShell({ guildId, guildName, userId, userTag, status, source, 
     createdAt: now,
     updatedAt: now,
     lastMessageAt: null,
-    subject: null,
+    subject: subject ?? null,
     participants: [],
     unreadCount: 0,
     actions: [],
@@ -976,9 +1110,45 @@ function normalizeStatus(status) {
   return null
 }
 
+function normalizeCategory(category) {
+  if (!category) {
+    return 'moderation'
+  }
+  const key = String(category).toLowerCase().trim()
+  if (key === 'ticket' || key === 'tickets') {
+    return 'ticket'
+  }
+  return 'moderation'
+}
+
+function buildInitialMetadata(entry = {}) {
+  const base = typeof entry.metadata === 'object' && entry.metadata !== null ? { ...entry.metadata } : {}
+  if (entry.reason && !base.reason) {
+    base.reason = entry.reason
+  }
+  if (entry.supportTopicLabel && !base.supportTopic) {
+    base.supportTopic = entry.supportTopicLabel
+  }
+  if (entry.supportContext && !base.supportContext) {
+    base.supportContext = entry.supportContext
+  }
+  return base
+}
+
 function assignCaseSubject(caseEntry, entry = {}) {
   if (caseEntry.subject && caseEntry.subject.trim()) {
     caseEntry.subject = caseEntry.subject.trim()
+    return
+  }
+
+  const category = normalizeCategory(caseEntry.category)
+  const supportTopic =
+    entry.supportTopicLabel ??
+    caseEntry.metadata?.supportTopic ??
+    null
+  if (supportTopic) {
+    const prefix = category === 'ticket' ? 'Ticket' : 'Case'
+    caseEntry.subject = `${prefix}: ${supportTopic}`.slice(0, 200)
     return
   }
 
@@ -1170,6 +1340,11 @@ function mergeWithDefaults(raw = {}) {
         userTag: item.userTag ?? null,
         status: normalizeStatus(item.status) ?? DEFAULT_STATUS,
         source: item.source ?? 'system',
+        category: normalizeCategory(item.category),
+        ticketType: item.ticketType ? String(item.ticketType) : null,
+        intakeChannelId: item.intakeChannelId ? String(item.intakeChannelId) : null,
+        intakeThreadId: item.intakeThreadId ? String(item.intakeThreadId) : null,
+        intakeMessageId: item.intakeMessageId ? String(item.intakeMessageId) : null,
         metadata: typeof item.metadata === 'object' && item.metadata !== null ? { ...item.metadata } : {},
         openedBy: item.openedBy ?? null,
         createdAt: item.createdAt ?? new Date().toISOString(),
