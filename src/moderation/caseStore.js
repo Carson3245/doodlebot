@@ -338,7 +338,7 @@ export async function ensureMemberCase({
   return { case: newCase, created: true, message: appendedMessage }
 }
 
-export async function findActiveCaseForMember(userId) {
+async function findActiveCaseForMemberInternal(userId) {
   if (!userId) {
     return null
   }
@@ -362,29 +362,7 @@ export async function findActiveCaseForMember(userId) {
   return { ...selected }
 }
 
-export async function findActiveCaseForMember(userId) {
-  if (!userId) {
-    return null
-  }
-
-  const data = await loadData()
-  const key = String(userId)
-  const candidates = data.cases
-    .filter((entry) => entry.userId === key)
-    .sort((left, right) => {
-      const leftTimestamp = left.lastMessageAt ?? left.updatedAt ?? left.createdAt ?? ''
-      const rightTimestamp = right.lastMessageAt ?? right.updatedAt ?? right.createdAt ?? ''
-      return rightTimestamp.localeCompare(leftTimestamp)
-    })
-
-  if (!candidates.length) {
-    return null
-  }
-
-  const active = candidates.find((entry) => !isTerminalStatus(entry.status ?? DEFAULT_STATUS))
-  const selected = active ?? candidates[0]
-  return { ...selected }
-}
+export { findActiveCaseForMemberInternal as findActiveCaseForMember }
 
 export async function appendCaseMessage({
   guildId,
