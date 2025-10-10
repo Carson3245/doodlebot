@@ -184,7 +184,16 @@ function renderComponents(session) {
     .setMaxValues(1)
 
   if (!session.category) {
-    topicSelect.setDisabled(true)
+    topicSelect
+      .setDisabled(true)
+      .addOptions([
+        {
+          label: 'Select a category first',
+          value: 'pending-category',
+          description: 'Choose a category to unlock the topics list.',
+          default: true
+        }
+      ])
   } else {
     topicSelect.addOptions(buildTopicOptions(session.category, session.topicValue))
   }
