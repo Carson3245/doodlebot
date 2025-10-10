@@ -2,7 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../authContext.js'
 import { useGuild } from '../guildContext.js'
-import logoSrc from '../assets/logo.svg'
+
+const LOGO_SRC = '/assets/logo.svg'
 
 const NAV_ITEMS = [
   { label: 'Dashboard', to: '/' },
@@ -157,7 +158,7 @@ export function AppLayout() {
 function SidebarBrand({ guild }) {
   return (
     <div className="sidebar__brand">
-      <img src={logoSrc} alt="Planet Doodley logo" className="sidebar__logo" />
+      <img src={LOGO_SRC} alt="Planet Doodley logo" className="sidebar__logo" />
       <div>
         <p className="sidebar__title">Planet Doodle</p>
         <p className="sidebar__subtitle">
@@ -311,7 +312,7 @@ function AuthOverlay() {
   return (
     <div className="auth-overlay" data-auth-overlay>
       <div className="auth-overlay__panel">
-        <img src={logoSrc} alt="Planet Doodley logo" className="auth-overlay__logo" />
+        <img src={LOGO_SRC} alt="Planet Doodley logo" className="auth-overlay__logo" />
         <h2>Log in to manage Doodley</h2>
         <p className="auth-overlay__helper">Use your Discord account to access the control panel.</p>
         {error && <p className="auth-overlay__error">{error}</p>}

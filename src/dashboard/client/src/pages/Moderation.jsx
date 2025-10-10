@@ -30,9 +30,10 @@ const TEMPLATE_LABELS = {
 
 function createQuickActionState() {
   return {
-    ban: { user: '', guildId: '', reason: '', feedback: null, pending: false },
-    timeout: { user: '', guildId: '', reason: '', duration: '', feedback: null, pending: false },
-    warn: { user: '', guildId: '', reason: '', feedback: null, pending: false }
+    kick: { user: '', reason: '', feedback: null, pending: false },
+    ban: { user: '', reason: '', feedback: null, pending: false },
+    timeout: { user: '', reason: '', duration: '', feedback: null, pending: false },
+    warn: { user: '', reason: '', feedback: null, pending: false }
   }
 }
 
@@ -52,77 +53,27 @@ function createEmptyCaseDetail() {
   }
 }
 
-function CollapsiblePanel({
-  sectionKey,
-  title,
-  description,
-  meta,
-  actions,
-  children,
-  collapsed,
-  onToggle,
-  bodyClassName,
-  bodyProps = {}
-}) {
-  const { hidden: bodyHiddenProp, ...restBodyProps } = bodyProps
-  const bodyId = `${sectionKey}-panel`
-  const isCollapsed = Boolean(collapsed)
-
-  return (
-    <section className={`panel panel--collapsible${isCollapsed ? ' panel--collapsed' : ''}`}>
-      <header className="panel__header panel__header--collapsible">
-        <div>
-          <h2>{title}</h2>
-          {description ? <p>{description}</p> : null}
-        </div>
-        <div className="panel__header-controls">
-          {typeof meta === 'string' ? <span className="panel__meta">{meta}</span> : meta}
-          {actions}
-          <button
-            type="button"
-            className="button button--ghost panel__toggle"
-            onClick={onToggle}
-            aria-expanded={!isCollapsed}
-            aria-controls={bodyId}
-          >
-            {isCollapsed ? 'Mostrar' : 'Ocultar'}
-          </button>
-        </div>
-      </header>
-      <div
-        className={`panel__body${bodyClassName ? ` ${bodyClassName}` : ''}`}
-        id={bodyId}
-        hidden={isCollapsed || bodyHiddenProp}
-        {...restBodyProps}
-      >
-        {children}
-      </div>
-    </section>
-  )
-}
-
 const feedbackPalette = {
   success: { color: 'var(--success, #4caf50)' },
   error: { color: 'var(--danger, #e53935)' },
   info: { color: 'var(--accent, #4f86f7)' }
 }
 
-const guildDatalistId = 'moderation-guild-options'
-
 const CASE_FILTER_OPTIONS = [
-  { value: 'active', label: 'Ativos' },
-  { value: 'pending-response', label: 'Aguardando resposta' },
-  { value: 'escalated', label: 'Escalonados' },
-  { value: 'open', label: 'Somente abertos' },
-  { value: 'closed', label: 'Fechados' },
-  { value: 'archived', label: 'Arquivados' },
-  { value: 'all', label: 'Todos' }
+  { value: 'active', label: 'Active' },
+  { value: 'pending-response', label: 'Awaiting member reply' },
+  { value: 'escalated', label: 'Escalated' },
+  { value: 'open', label: 'Open only' },
+  { value: 'closed', label: 'Closed' },
+  { value: 'archived', label: 'Archived' },
+  { value: 'all', label: 'All cases' }
 ]
 
 export default function ModerationPage() {
   const { authenticated, refreshAuth } = useAuth()
   const { selectedGuild } = useGuild()
   const [memberLookup, setMemberLookup] = useState({
+    kick: { results: [], loading: false },
     ban: { results: [], loading: false },
     timeout: { results: [], loading: false },
     warn: { results: [], loading: false }
@@ -132,6 +83,7 @@ export default function ModerationPage() {
   const eventSourceRef = useRef(null)
   const reconnectTimerRef = useRef(null)
   const [quickActionTargets, setQuickActionTargets] = useState({
+    kick: null,
     ban: null,
     timeout: null,
     warn: null
@@ -140,6 +92,7 @@ export default function ModerationPage() {
     loading: true,
     bans: 0,
     timeouts: 0,
+    kicks: 0,
     warnings: 0,
     cases: 0,
     updatedAt: null,
@@ -167,23 +120,20 @@ export default function ModerationPage() {
   const [feedback, setFeedback] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [guildOptions, setGuildOptions] = useState([])
   const [quickActions, setQuickActions] = useState(() => createQuickActionState())
-  const [collapsedPanels, setCollapsedPanels] = useState({
-    overview: false,
-    quickActions: false,
+  const [collapsedPanels, setCollapsedPanels] = useState(() => ({
+    quickActions: true,
     filters: true,
     spam: true,
     escalation: true,
     alerts: true,
-    templates: true,
-    review: false
-  })
+    templates: true
+  }))
 
-  const togglePanel = useCallback((key) => {
-    setCollapsedPanels((prev) => ({
-      ...prev,
-      [key]: !prev[key]
+  const togglePanel = useCallback((panel) => {
+    setCollapsedPanels((previous) => ({
+      ...previous,
+      [panel]: !previous[panel]
     }))
   }, [])
 
@@ -191,24 +141,13 @@ export default function ModerationPage() {
     Object.values(lookupTimers.current).forEach((timer) => clearTimeout(timer))
     lookupTimers.current = {}
     setMemberLookup({
+      kick: { results: [], loading: false },
       ban: { results: [], loading: false },
       timeout: { results: [], loading: false },
       warn: { results: [], loading: false }
     })
-    if (selectedGuild?.id) {
-      setQuickActions((prev) => ({
-        ban: { ...prev.ban, guildId: selectedGuild.id },
-        timeout: { ...prev.timeout, guildId: selectedGuild.id },
-        warn: { ...prev.warn, guildId: selectedGuild.id }
-      }))
-    } else {
-      setQuickActions((prev) => ({
-        ban: { ...prev.ban, guildId: '' },
-        timeout: { ...prev.timeout, guildId: '' },
-        warn: { ...prev.warn, guildId: '' }
-      }))
-    }
-    setQuickActionTargets({ ban: null, timeout: null, warn: null })
+    setQuickActions(createQuickActionState())
+    setQuickActionTargets({ kick: null, ban: null, timeout: null, warn: null })
   }, [selectedGuild?.id])
 
   const keywordList = useMemo(() => config?.filters?.customKeywords ?? [], [config?.filters?.customKeywords])
@@ -219,6 +158,7 @@ export default function ModerationPage() {
         loading: false,
         bans: 0,
         timeouts: 0,
+        kicks: 0,
         warnings: 0,
         cases: 0,
         updatedAt: null,
@@ -241,6 +181,7 @@ export default function ModerationPage() {
         loading: false,
         bans: data.bans ?? 0,
         timeouts: data.timeouts ?? 0,
+        kicks: data.kicks ?? 0,
         warnings: data.warnings ?? 0,
         cases: data.cases ?? 0,
         updatedAt: data.updatedAt ?? null,
@@ -319,29 +260,6 @@ export default function ModerationPage() {
     }
   }, [authenticated, caseFilter, refreshAuth, selectedGuild?.id])
 
-  const loadGuilds = useCallback(async () => {
-    if (!authenticated) {
-      setGuildOptions([])
-      return
-    }
-
-    try {
-      const response = await fetch('/api/status')
-      if (response.status === 401) {
-        refreshAuth()
-        return
-      }
-      if (!response.ok) {
-        throw new Error('Failed to load guild list')
-      }
-      const data = await response.json()
-      setGuildOptions(Array.isArray(data.guilds) ? data.guilds : [])
-    } catch (error) {
-      console.error('Failed to load guild options', error)
-      setGuildOptions([])
-    }
-  }, [authenticated, refreshAuth])
-
   const loadCaseDetail = useCallback(
     async (caseId, guildId) => {
       if (!caseId || !guildId || !authenticated) {
@@ -417,6 +335,7 @@ export default function ModerationPage() {
             loading: false,
             bans: payload.bans ?? 0,
             timeouts: payload.timeouts ?? 0,
+            kicks: payload.kicks ?? 0,
             warnings: payload.warnings ?? 0,
             cases: payload.cases ?? 0,
             updatedAt: payload.updatedAt ?? null,
@@ -472,10 +391,6 @@ export default function ModerationPage() {
   useEffect(() => {
     loadCases()
   }, [loadCases])
-
-  useEffect(() => {
-    loadGuilds()
-  }, [loadGuilds])
 
   useEffect(() => {
     if (caseInbox.selectedCaseId) {
@@ -792,7 +707,7 @@ export default function ModerationPage() {
     const confirmed =
       typeof window === 'undefined'
         ? true
-        : window.confirm('Tem certeza de que deseja excluir este caso? Esta ação não pode ser desfeita.')
+        : window.confirm('Are you sure you want to delete this case? This cannot be undone.')
     if (!confirmed) {
       setCaseMenuOpen(false)
       return
@@ -802,14 +717,14 @@ export default function ModerationPage() {
     if (!guildId) {
       setCaseDetail((prev) => ({
         ...prev,
-        error: 'Selecione uma guilda antes de excluir o caso.'
+        error: 'Select a server before deleting the case.'
       }))
       return
     }
     if (!authenticated) {
       setCaseDetail((prev) => ({
         ...prev,
-        error: 'Faça login como moderador para excluir o caso.'
+        error: 'Sign in with a moderator account to delete the case.'
       }))
       return
     }
@@ -824,7 +739,7 @@ export default function ModerationPage() {
         setCaseDetail((prev) => ({
           ...prev,
           statusUpdating: false,
-          error: 'Sessão expirada. Entre novamente.'
+          error: 'Session expired. Please log in again.'
         }))
         return
       }
@@ -984,15 +899,23 @@ const submitQuickAction = useCallback(
       }
 
       const current = quickActions[action]
-      const guildId = (current.guildId || selectedGuild?.id || '').trim()
+      const guildId = (selectedGuild?.id || caseInbox.selectedCaseGuildId || '').trim()
       const userInput = current.user.trim()
       const selectedMember = quickActionTargets[action]
       const userId = userInput || (selectedMember ? selectedMember.id : '')
       const trimmedReason = current.reason.trim()
 
-      if (!guildId || !userId) {
+      if (!guildId) {
         updateQuickAction(action, {
-          feedback: { type: 'error', text: 'Provide both guild ID and member ID.' },
+          feedback: { type: 'error', text: 'Select a server before running quick actions.' },
+          pending: false
+        })
+        return
+      }
+
+      if (!userId) {
+        updateQuickAction(action, {
+          feedback: { type: 'error', text: 'Choose a member to moderate.' },
           pending: false
         })
         return
@@ -1054,6 +977,7 @@ const submitQuickAction = useCallback(
             loading: false,
             bans: data.stats.bans ?? 0,
             timeouts: data.stats.timeouts ?? 0,
+            kicks: data.stats.kicks ?? 0,
             warnings: data.stats.warnings ?? 0,
             cases: data.stats.cases ?? 0,
             updatedAt: data.stats.updatedAt ?? new Date().toISOString(),
@@ -1064,17 +988,22 @@ const submitQuickAction = useCallback(
         }
         loadCases()
 
-        setQuickActions((prev) => ({
-          ...prev,
-          [action]: {
+        setQuickActions((prev) => {
+          const next = {
             ...prev[action],
             user: '',
             reason: '',
-            duration: action === 'timeout' ? '' : prev[action].duration,
             feedback: { type: 'success', text: 'Action executed successfully.' },
             pending: false
           }
-        }))
+          if (action === 'timeout') {
+            next.duration = ''
+          }
+          return {
+            ...prev,
+            [action]: next
+          }
+        })
         setQuickActionTargets((prev) => ({ ...prev, [action]: null }))
         setMemberLookup((prev) => ({
           ...prev,
@@ -1088,7 +1017,17 @@ const submitQuickAction = useCallback(
         })
       }
     },
-    [authenticated, loadCases, loadStats, quickActionTargets, quickActions, refreshAuth, selectedGuild?.id, updateQuickAction]
+    [
+      authenticated,
+      caseInbox.selectedCaseGuildId,
+      loadCases,
+      loadStats,
+      quickActionTargets,
+      quickActions,
+      refreshAuth,
+      selectedGuild?.id,
+      updateQuickAction
+    ]
   )
 
   const filters = config?.filters ?? {}
@@ -1212,961 +1151,1039 @@ const submitQuickAction = useCallback(
 
   return (
     <div className="page moderation-page">
-      <CollapsiblePanel
-        sectionKey="overview"
-        title="Moderation overview"
-        description="Monitor automated actions taken by the bot."
-        meta={
-          stats.error
-            ? stats.error
-            : stats.updatedAt
-              ? `Updated ${formatDateTime(stats.updatedAt)}`
-              : 'Awaiting first update'
-        }
-        collapsed={collapsedPanels.overview}
-        onToggle={() => togglePanel('overview')}
-        bodyClassName="stat-grid"
-      >
-        <article className="stat-card">
-          <p className="stat-card__label">Automated bans</p>
-          <p className="stat-card__value">{stats.loading ? '--' : stats.bans}</p>
-          <span className="stat-card__helper">Triggered by escalation rules</span>
-        </article>
-        <article className="stat-card">
-          <p className="stat-card__label">Timeouts applied</p>
-          <p className="stat-card__value">{stats.loading ? '--' : stats.timeouts}</p>
-          <span className="stat-card__helper">Includes spam auto-timeouts</span>
-        </article>
-        <article className="stat-card">
-          <p className="stat-card__label">Logged warnings</p>
-          <p className="stat-card__value">{stats.loading ? '--' : stats.warnings}</p>
-          <span className="stat-card__helper">Totals since last reset</span>
-        </article>
-        <article className="stat-card">
-          <p className="stat-card__label">Cases on record</p>
-          <p className="stat-card__value">{stats.loading ? '--' : stats.cases}</p>
-          <span className="stat-card__helper">Stored in data/moderation/cases.json</span>
-        </article>
-      </CollapsiblePanel>
+      <div className="moderation-page__layout">
+        <div className="moderation-page__column moderation-page__column--primary">
+          <section className="panel">
+            <header className="panel__header">
+              <div>
+                <h2>Moderation overview</h2>
+                <p>Monitor automated actions taken by the bot.</p>
+              </div>
+              <div className="panel__header-actions">
+                <p className="panel__meta">
+                  {stats.error
+                    ? stats.error
+                    : stats.updatedAt
+                      ? `Updated ${formatDateTime(stats.updatedAt)}`
+                      : 'Awaiting first update'}
+                </p>
+              </div>
+            </header>
+            <div className="panel__body stat-grid">
+              <article className="stat-card">
+                <p className="stat-card__label">Automated bans</p>
+                <p className="stat-card__value">{stats.loading ? '--' : stats.bans}</p>
+                <span className="stat-card__helper">Triggered by escalation rules</span>
+              </article>
+              <article className="stat-card">
+                <p className="stat-card__label">Timeouts applied</p>
+                <p className="stat-card__value">{stats.loading ? '--' : stats.timeouts}</p>
+                <span className="stat-card__helper">Includes spam auto-timeouts</span>
+              </article>
+              <article className="stat-card">
+                <p className="stat-card__label">Members kicked</p>
+                <p className="stat-card__value">{stats.loading ? '--' : stats.kicks}</p>
+                <span className="stat-card__helper">Manual removals logged</span>
+              </article>
+              <article className="stat-card">
+                <p className="stat-card__label">Logged warnings</p>
+                <p className="stat-card__value">{stats.loading ? '--' : stats.warnings}</p>
+                <span className="stat-card__helper">Totals since last reset</span>
+              </article>
+              <article className="stat-card">
+                <p className="stat-card__label">Cases on record</p>
+                <p className="stat-card__value">{stats.loading ? '--' : stats.cases}</p>
+                <span className="stat-card__helper">Stored in data/moderation/cases.json</span>
+              </article>
+            </div>
+          </section>
 
-      <CollapsiblePanel
-        sectionKey="quickActions"
-        title="Quick actions"
-        description="Run manual moderation actions straight from the dashboard."
-        collapsed={collapsedPanels.quickActions}
-        onToggle={() => togglePanel('quickActions')}
-        bodyClassName="quick-actions"
-        bodyProps={{ 'data-auth-signed-in': authenticated ? 'true' : 'false' }}
-      >
-        {!authenticated ? (
-          <p className="placeholder">Log in with your moderator account to unlock quick actions.</p>
-        ) : (
-          <>
-            <p className="helper">
-              Your dashboard session will be used as the moderator identity. Provide the guild and user IDs to target.
-            </p>
-            <datalist id={guildDatalistId}>
-              {guildOptions.map((guild) => (
-                <option key={guild.id} value={guild.id}>
-                  {guild.name}
-                </option>
-              ))}
-            </datalist>
-            {selectedGuild ? (
-              <div className="quick-actions__grid">
-                <form className="form quick-action" data-action="ban" onSubmit={(event) => submitQuickAction(event, 'ban')}>
-                  <h3>Ban</h3>
-                  <div className="form-row">
-                    <label htmlFor="ban-guild">Guild ID</label>
-                    <input
-                      id="ban-guild"
-                      name="guildId"
-                      list={guildDatalistId}
-                      placeholder="1234567890"
-                      value={quickActions.ban.guildId || selectedGuild?.id || ''}
-                      onChange={(event) => updateQuickAction('ban', { guildId: event.target.value })}
-                      disabled={!authenticated || !selectedGuild || quickActions.ban.pending}
-                      required
-                    />
-                  </div>
-                  <div className="form-row">
-                    <label htmlFor="ban-user">Member</label>
-                    <input
-                      id="ban-user"
-                      name="user"
-                      list="member-suggest-ban"
-                      placeholder="@user or ID"
-                      value={quickActions.ban.user}
-                      onChange={(event) => handleMemberInput('ban', event.target.value)}
-                      onBlur={() => handleMemberBlur('ban')}
-                      disabled={!authenticated || !selectedGuild || quickActions.ban.pending}
-                      required
-                    />
-                    <datalist id="member-suggest-ban">
-                      {memberLookup.ban.results.map((member) => (
-                        <option
-                          key={member.id}
-                          value={member.id}
-                          label={`${member.displayName || member.username || member.id} (${member.id})`}
-                        />
-                      ))}
-                    </datalist>
-                    {memberLookup.ban.loading && <p className="form-helper">Searching members...</p>}
-                    {memberLookup.ban.results.length > 0 && (
-                      <div className="member-suggestions">
-                        {memberLookup.ban.results.map((member) => (
+          <section className="panel case-hub">
+            <header className="panel__header">
+              <div>
+                <h2>Case inbox</h2>
+                <p>Coordinate case conversations, triage actions, and close investigations.</p>
+              </div>
+              <div className="case-hub__toolbar panel__header-actions">
+                <span className="panel__meta">
+                  {caseInbox.loading ? 'Refreshing cases...' : caseCountSummary}
+                </span>
+                <label className="visually-hidden" htmlFor="case-filter">
+                  Filter cases
+                </label>
+                <select
+                  id="case-filter"
+                  className="case-hub__filter"
+                  value={caseFilter}
+                  onChange={(event) => setCaseFilter(event.target.value)}
+                  disabled={caseInbox.loading}
+                >
+                  {CASE_FILTER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  onClick={loadCases}
+                  disabled={caseInbox.loading}
+                >
+                  Refresh
+                </button>
+              </div>
+            </header>
+            <div className="panel__body case-hub__body">
+              <aside className="case-hub__list" aria-label="Case queue">
+                {caseInbox.loading ? (
+                  <p className="placeholder">Loading cases...</p>
+                ) : caseInbox.error ? (
+                  <p className="placeholder">{caseInbox.error}</p>
+                ) : caseInbox.items.length === 0 ? (
+                  <p className="placeholder">{formatEmptyCaseMessage(caseFilter)}</p>
+                ) : (
+                  <ul className="case-hub__items">
+                    {caseInbox.items.map((item) => {
+                      const isActive = item.id === caseInbox.selectedCaseId
+                      const participant =
+                        item.memberTag || item.userTag || item.memberName || item.userName || item.userId
+                      const lastUpdate = item.updatedAt || item.createdAt
+                      return (
+                        <li key={item.id}>
                           <button
                             type="button"
-                            key={member.id}
-                            className="member-suggestion"
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => handleMemberPick('ban', member)}
+                            className={`case-card${isActive ? ' case-card--active' : ''}`}
+                            onClick={() => handleSelectCase(item.id)}
                           >
-                            <span
-                              className="member-suggestion__avatar"
-                              style={
-                                member.avatar
-                                  ? { backgroundImage: `url(${member.avatar})` }
-                                  : undefined
-                              }
-                            >
-                              {!member.avatar &&
-                                (member.displayName || member.username || member.id)
-                                  .slice(0, 2)
-                                  .toUpperCase()}
-                            </span>
-                            <span className="member-suggestion__meta">
-                              <strong>{member.displayName || member.username || member.id}</strong>
-                              <small>{member.id}</small>
-                            </span>
+                            <span className="case-card__title">{item.subject || item.reason || `Case ${item.id}`}</span>
+                            <span className="case-card__participant">{participant || 'Unknown member'}</span>
+                            <div className="case-card__footer">
+                              <span className={`case-status case-status--${(item.status || 'open').toLowerCase()}`}>
+                                {formatCaseStatus(item.status)}
+                              </span>
+                              {item.unreadCount > 0 && (
+                                <span className="case-card__badge" aria-label={`${item.unreadCount} new messages`}>
+                                  {item.unreadCount}
+                                </span>
+                              )}
+                              {lastUpdate && (
+                                <span className="case-card__time">{formatDateTime(lastUpdate)}</span>
+                              )}
+                            </div>
                           </button>
-                        ))}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </aside>
+              <div className="case-hub__conversation">
+                {!caseInbox.selectedCaseId ? (
+                  <div className="case-hub__placeholder">
+                    <h3>Select a case</h3>
+                    <p>Pick a case from the list to review history, reply to members, and trigger quick actions.</p>
+                  </div>
+                ) : (
+                  <div className="case-hub__conversation-wrapper">
+                    <header className="case-hub__conversation-header">
+                      <div>
+                        <h3>{caseDetail.subject || 'Member conversation'}</h3>
+                        <p>
+                          {caseDetail.openedBy
+                            ? `Opened by ${caseDetail.openedBy.tag || caseDetail.openedBy.displayName || caseDetail.openedBy.id}`
+                            : 'Waiting for case details'}
+                          {caseDetail.openedAt ? ` • ${formatDateTime(caseDetail.openedAt)}` : ''}
+                        </p>
                       </div>
-                    )}
-                    {quickActionTargets.ban && (
-                      <div className="member-pill">
-                        <span
-                          className="member-pill__avatar"
-                          style={
-                            quickActionTargets.ban.avatar
-                              ? { backgroundImage: `url(${quickActionTargets.ban.avatar})` }
-                              : undefined
+                      <div className="case-hub__conversation-tools">
+                        <button
+                          type="button"
+                          className="case-hub__menu-trigger"
+                          ref={caseMenuRef}
+                          onClick={() => setCaseMenuOpen((open) => !open)}
+                          aria-haspopup="true"
+                          aria-expanded={caseMenuOpen}
+                        >
+                          Actions
+                        </button>
+                        {caseMenuOpen && (
+                          <div className="case-hub__menu" role="menu">
+                            <button type="button" role="menuitem" onClick={() => handleCaseStatusChange('open')}>
+                              {conversationLocked ? 'Reopen case' : 'Mark as open'}
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleCaseStatusChange('pending-response')}>
+                              Mark waiting on member
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleCaseStatusChange('closed')}>
+                              Close case
+                            </button>
+                            <button type="button" role="menuitem" onClick={() => handleCaseStatusChange('archived')}>
+                              Archive case
+                            </button>
+                            <button type="button" role="menuitem" className="danger" onClick={handleDeleteCase}>
+                              Delete case
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </header>
+                    <div className="case-hub__participants">
+                      {caseDetail.participants.length > 0 ? (
+                        <ul>
+                          {caseDetail.participants.map((participant) => (
+                            <li key={participant.id}>
+                              <span className={`case-participant case-participant--${participant.role}`}>
+                                {participant.displayName || participant.tag || participant.id}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="placeholder">No participants recorded yet.</p>
+                      )}
+                    </div>
+                    <div className="case-hub__conversation-body" ref={caseConversationRef}>
+                      {caseDetail.loading ? (
+                        <p className="placeholder">Loading conversation...</p>
+                      ) : caseDetail.messages.length === 0 ? (
+                        <p className="placeholder">No messages recorded for this case yet.</p>
+                      ) : (
+                        <ul className="case-messages">
+                          {caseDetail.messages.map((message) => {
+                            const role = (message.author?.role || 'member').toLowerCase()
+                            return (
+                              <li key={message.id || message.createdAt} className={`case-message case-message--${role}`}>
+                                <header>
+                                  <span className="case-message__author">
+                                    {message.author?.displayName || message.author?.tag || message.author?.id || 'Membro'}
+                                  </span>
+                                  {message.createdAt && (
+                                    <time dateTime={new Date(message.createdAt).toISOString()}>
+                                      {formatDateTime(message.createdAt)}
+                                    </time>
+                                  )}
+                                </header>
+                                <p className="case-message__content">{message.content ?? ''}</p>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
+                    </div>
+
+                    <form className="case-composer" onSubmit={handleSendCaseMessage}>
+                      <label className="visually-hidden" htmlFor="case-reply">
+                        Reply to member
+                      </label>
+                      <textarea
+                        id="case-reply"
+                        placeholder={
+                          conversationLocked
+                            ? 'This case is closed or archived. Reopen it to respond.'
+                            : 'Type a reply to the member...'
+                        }
+                        value={caseReply}
+                        onChange={(event) => setCaseReply(event.target.value)}
+                        disabled={
+                          !authenticated ||
+                          caseDetail.sending ||
+                          conversationLocked
+                        }
+                        rows={4}
+                      />
+                      <div className="case-composer__footer">
+                        {caseDetail.error && <p className="form-helper form-helper--error">{caseDetail.error}</p>}
+                        <button
+                          type="submit"
+                          className="button button--primary"
+                          disabled={
+                            !authenticated ||
+                            caseDetail.sending ||
+                            !caseInbox.selectedCaseId ||
+                            conversationLocked
                           }
                         >
-                          {!quickActionTargets.ban.avatar &&
-                            (quickActionTargets.ban.displayName ||
-                              quickActionTargets.ban.username ||
-                              quickActionTargets.ban.id)
-                              .slice(0, 2)
-                              .toUpperCase()}
-                        </span>
-                        <span>
-                          {quickActionTargets.ban.displayName ||
-                            quickActionTargets.ban.username ||
-                            quickActionTargets.ban.id}
-                        </span>
+                          {caseDetail.sending ? 'Sending...' : 'Send message'}
+                        </button>
                       </div>
-                    )}
+                    </form>
                   </div>
-                  <div className="form-row">
-                    <label htmlFor="ban-reason">Reason</label>
-                    <input
-                      id="ban-reason"
-                      name="reason"
-                      placeholder="Rule violation..."
-                      value={quickActions.ban.reason}
-                      onChange={(event) => updateQuickAction('ban', { reason: event.target.value })}
-                      disabled={!authenticated || !selectedGuild || quickActions.ban.pending}
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="button button--primary"
-                    disabled={!authenticated || !selectedGuild || quickActions.ban.pending}
-                  >
-                    {quickActions.ban.pending ? 'Processing...' : 'Ban member'}
-                  </button>
-                  {quickActions.ban.feedback && (
-                    <p className="form-helper" style={feedbackPalette[quickActions.ban.feedback.type] ?? undefined}>
-                      {quickActions.ban.feedback.text}
-                    </p>
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div className="moderation-page__column moderation-page__column--secondary">
+          <section className={`panel panel--collapsible ${collapsedPanels.quickActions ? 'panel--collapsed' : ''}`}>
+            <header className="panel__header">
+              <div>
+                <h2>Quick actions</h2>
+                <p>Run manual moderation actions straight from the dashboard.</p>
+              </div>
+              <div className="panel__header-actions">
+                <button
+                  type="button"
+                  className="panel__toggle"
+                  aria-expanded={!collapsedPanels.quickActions}
+                  aria-controls="panel-quick-actions"
+                  onClick={() => togglePanel('quickActions')}
+                >
+                  {collapsedPanels.quickActions ? 'Expand' : 'Collapse'}
+                  <span className="panel__toggle-icon" aria-hidden="true">▾</span>
+                </button>
+              </div>
+            </header>
+            <div
+              id="panel-quick-actions"
+              className="panel__body quick-actions"
+              data-auth-signed-in
+              hidden={collapsedPanels.quickActions}
+            >
+              {authenticated ? (
+                <>
+                  <p className="helper">
+                    Your dashboard session will be used as the moderator identity. Pick a server in the header and search for a
+                    member below to auto-fill their ID with avatar previews.
+                  </p>
+                  {selectedGuild ? (
+                    <div className="quick-actions__grid">
+                      <form className="form quick-action" data-action="kick" onSubmit={(event) => submitQuickAction(event, 'kick')}>
+                        <h3>Kick</h3>
+                        <div className="form-row">
+                          <label htmlFor="kick-user">Member</label>
+                          <input
+                            id="kick-user"
+                            name="user"
+                            type="search"
+                            placeholder="Search by name or ID"
+                            value={quickActions.kick.user}
+                            onChange={(event) => handleMemberInput('kick', event.target.value)}
+                            onBlur={() => handleMemberBlur('kick')}
+                            disabled={!authenticated || !selectedGuild || quickActions.kick.pending}
+                            autoComplete="off"
+                            aria-autocomplete="list"
+                            required
+                          />
+                          {memberLookup.kick.loading && <p className="form-helper">Searching members...</p>}
+                          {memberLookup.kick.results.length > 0 && (
+                            <div className="member-suggestions">
+                              {memberLookup.kick.results.map((member) => (
+                                <button
+                                  type="button"
+                                  key={member.id}
+                                  className="member-suggestion"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => handleMemberPick('kick', member)}
+                                >
+                                  <span
+                                    className="member-suggestion__avatar"
+                                    style={
+                                      member.avatar
+                                        ? { backgroundImage: `url(${member.avatar})` }
+                                        : undefined
+                                    }
+                                  >
+                                    {!member.avatar &&
+                                      (member.displayName || member.username || member.id)
+                                        .slice(0, 2)
+                                        .toUpperCase()}
+                                  </span>
+                                  <span className="member-suggestion__meta">
+                                    <strong>{member.displayName || member.username || member.id}</strong>
+                                    <small>{member.id}</small>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {quickActionTargets.kick && (
+                            <div className="member-pill">
+                              <span
+                                className="member-pill__avatar"
+                                style={
+                                  quickActionTargets.kick.avatar
+                                    ? { backgroundImage: `url(${quickActionTargets.kick.avatar})` }
+                                    : undefined
+                                }
+                              >
+                                {!quickActionTargets.kick.avatar &&
+                                  (quickActionTargets.kick.displayName ||
+                                    quickActionTargets.kick.username ||
+                                    quickActionTargets.kick.id)
+                                    .slice(0, 2)
+                                    .toUpperCase()}
+                              </span>
+                              <span>
+                                {quickActionTargets.kick.displayName ||
+                                  quickActionTargets.kick.username ||
+                                  quickActionTargets.kick.id}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="form-row">
+                          <label htmlFor="kick-reason">Reason</label>
+                          <input
+                            id="kick-reason"
+                            name="reason"
+                            placeholder="Rule violation, disruption..."
+                            value={quickActions.kick.reason}
+                            onChange={(event) => updateQuickAction('kick', { reason: event.target.value })}
+                            disabled={!authenticated || !selectedGuild || quickActions.kick.pending}
+                          />
+                        </div>
+                        <button type="submit" className="button button--primary" disabled={!authenticated || !selectedGuild || quickActions.kick.pending}>
+                          {quickActions.kick.pending ? 'Processing...' : 'Kick member'}
+                        </button>
+                        {quickActions.kick.feedback && (
+                          <p className="form-helper" style={feedbackPalette[quickActions.kick.feedback.type] ?? undefined}>
+                            {quickActions.kick.feedback.text}
+                          </p>
+                        )}
+                      </form>
+                      <form className="form quick-action" data-action="ban" onSubmit={(event) => submitQuickAction(event, 'ban')}>
+                        <h3>Ban</h3>
+                        <div className="form-row">
+                          <label htmlFor="ban-user">Member</label>
+                          <input
+                            id="ban-user"
+                            name="user"
+                            type="search"
+                            placeholder="Search by name or ID"
+                            value={quickActions.ban.user}
+                            onChange={(event) => handleMemberInput('ban', event.target.value)}
+                            onBlur={() => handleMemberBlur('ban')}
+                            disabled={!authenticated || !selectedGuild || quickActions.ban.pending}
+                            autoComplete="off"
+                            aria-autocomplete="list"
+                            required
+                          />
+                          {memberLookup.ban.loading && <p className="form-helper">Searching members...</p>}
+                          {memberLookup.ban.results.length > 0 && (
+                            <div className="member-suggestions">
+                              {memberLookup.ban.results.map((member) => (
+                                <button
+                                  type="button"
+                                  key={member.id}
+                                  className="member-suggestion"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => handleMemberPick('ban', member)}
+                                >
+                                  <span
+                                    className="member-suggestion__avatar"
+                                    style={
+                                      member.avatar
+                                        ? { backgroundImage: `url(${member.avatar})` }
+                                        : undefined
+                                    }
+                                  >
+                                    {!member.avatar &&
+                                      (member.displayName || member.username || member.id)
+                                        .slice(0, 2)
+                                        .toUpperCase()}
+                                  </span>
+                                  <span className="member-suggestion__meta">
+                                    <strong>{member.displayName || member.username || member.id}</strong>
+                                    <small>{member.id}</small>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {quickActionTargets.ban && (
+                            <div className="member-pill">
+                              <span
+                                className="member-pill__avatar"
+                                style={
+                                  quickActionTargets.ban.avatar
+                                    ? { backgroundImage: `url(${quickActionTargets.ban.avatar})` }
+                                    : undefined
+                                }
+                              >
+                                {!quickActionTargets.ban.avatar &&
+                                  (quickActionTargets.ban.displayName ||
+                                    quickActionTargets.ban.username ||
+                                    quickActionTargets.ban.id)
+                                    .slice(0, 2)
+                                    .toUpperCase()}
+                              </span>
+                              <span>
+                                {quickActionTargets.ban.displayName ||
+                                  quickActionTargets.ban.username ||
+                                  quickActionTargets.ban.id}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="form-row">
+                          <label htmlFor="ban-reason">Reason</label>
+                          <input
+                            id="ban-reason"
+                            name="reason"
+                            placeholder="Spamming, abuse..."
+                            value={quickActions.ban.reason}
+                            onChange={(event) => updateQuickAction('ban', { reason: event.target.value })}
+                            disabled={!authenticated || !selectedGuild || quickActions.ban.pending}
+                          />
+                        </div>
+                        <button type="submit" className="button button--primary" disabled={!authenticated || !selectedGuild || quickActions.ban.pending}>
+                          {quickActions.ban.pending ? 'Processing...' : 'Ban member'}
+                        </button>
+                        {quickActions.ban.feedback && (
+                          <p className="form-helper" style={feedbackPalette[quickActions.ban.feedback.type] ?? undefined}>
+                            {quickActions.ban.feedback.text}
+                          </p>
+                        )}
+                      </form>
+                      <form
+                        className="form quick-action"
+                        data-action="timeout"
+                        onSubmit={(event) => submitQuickAction(event, 'timeout')}
+                      >
+                        <h3>Timeout</h3>
+                        <div className="form-row">
+                          <label htmlFor="timeout-user">Member</label>
+                          <input
+                            id="timeout-user"
+                            name="user"
+                            type="search"
+                            placeholder="Search by name or ID"
+                            value={quickActions.timeout.user}
+                            onChange={(event) => handleMemberInput('timeout', event.target.value)}
+                            onBlur={() => handleMemberBlur('timeout')}
+                            disabled={!authenticated || !selectedGuild || quickActions.timeout.pending}
+                            autoComplete="off"
+                            aria-autocomplete="list"
+                            required
+                          />
+                          {memberLookup.timeout.loading && <p className="form-helper">Searching members...</p>}
+                          {memberLookup.timeout.results.length > 0 && (
+                            <div className="member-suggestions">
+                              {memberLookup.timeout.results.map((member) => (
+                                <button
+                                  type="button"
+                                  key={member.id}
+                                  className="member-suggestion"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => handleMemberPick('timeout', member)}
+                                >
+                                  <span
+                                    className="member-suggestion__avatar"
+                                    style={
+                                      member.avatar
+                                        ? { backgroundImage: `url(${member.avatar})` }
+                                        : undefined
+                                    }
+                                  >
+                                    {!member.avatar &&
+                                      (member.displayName || member.username || member.id)
+                                        .slice(0, 2)
+                                        .toUpperCase()}
+                                  </span>
+                                  <span className="member-suggestion__meta">
+                                    <strong>{member.displayName || member.username || member.id}</strong>
+                                    <small>{member.id}</small>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {quickActionTargets.timeout && (
+                            <div className="member-pill">
+                              <span
+                                className="member-pill__avatar"
+                                style={
+                                  quickActionTargets.timeout.avatar
+                                    ? { backgroundImage: `url(${quickActionTargets.timeout.avatar})` }
+                                    : undefined
+                                }
+                              >
+                                {!quickActionTargets.timeout.avatar &&
+                                  (quickActionTargets.timeout.displayName ||
+                                    quickActionTargets.timeout.username ||
+                                    quickActionTargets.timeout.id)
+                                    .slice(0, 2)
+                                    .toUpperCase()}
+                              </span>
+                              <span>
+                                {quickActionTargets.timeout.displayName ||
+                                  quickActionTargets.timeout.username ||
+                                  quickActionTargets.timeout.id}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="form-row">
+                          <label htmlFor="timeout-duration">Duration (min)</label>
+                          <input
+                            id="timeout-duration"
+                            name="duration"
+                            type="number"
+                            min="1"
+                            max="10080"
+                            placeholder="60"
+                            value={quickActions.timeout.duration}
+                            onChange={(event) => updateQuickAction('timeout', { duration: event.target.value })}
+                            disabled={!authenticated || !selectedGuild || quickActions.timeout.pending}
+                            required
+                          />
+                        </div>
+                        <div className="form-row">
+                          <label htmlFor="timeout-reason">Reason</label>
+                          <input
+                            id="timeout-reason"
+                            name="reason"
+                            placeholder="Spamming, abuse..."
+                            value={quickActions.timeout.reason}
+                            onChange={(event) => updateQuickAction('timeout', { reason: event.target.value })}
+                            disabled={!authenticated || !selectedGuild || quickActions.timeout.pending}
+                          />
+                        </div>
+                        <button type="submit" className="button button--primary" disabled={!authenticated || !selectedGuild || quickActions.timeout.pending}>
+                          {quickActions.timeout.pending ? 'Processing...' : 'Timeout member'}
+                        </button>
+                        {quickActions.timeout.feedback && (
+                          <p className="form-helper" style={feedbackPalette[quickActions.timeout.feedback.type] ?? undefined}>
+                            {quickActions.timeout.feedback.text}
+                          </p>
+                        )}
+                      </form>
+                      <form className="form quick-action" data-action="warn" onSubmit={(event) => submitQuickAction(event, 'warn')}>
+                        <h3>Warn</h3>
+                        <div className="form-row">
+                          <label htmlFor="warn-user">Member</label>
+                          <input
+                            id="warn-user"
+                            name="user"
+                            type="search"
+                            placeholder="Search by name or ID"
+                            value={quickActions.warn.user}
+                            onChange={(event) => handleMemberInput('warn', event.target.value)}
+                            onBlur={() => handleMemberBlur('warn')}
+                            disabled={!authenticated || !selectedGuild || quickActions.warn.pending}
+                            autoComplete="off"
+                            aria-autocomplete="list"
+                            required
+                          />
+                          {memberLookup.warn.loading && <p className="form-helper">Searching members...</p>}
+                          {memberLookup.warn.results.length > 0 && (
+                            <div className="member-suggestions">
+                              {memberLookup.warn.results.map((member) => (
+                                <button
+                                  type="button"
+                                  key={member.id}
+                                  className="member-suggestion"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => handleMemberPick('warn', member)}
+                                >
+                                  <span
+                                    className="member-suggestion__avatar"
+                                    style={
+                                      member.avatar
+                                        ? { backgroundImage: `url(${member.avatar})` }
+                                        : undefined
+                                    }
+                                  >
+                                    {!member.avatar &&
+                                      (member.displayName || member.username || member.id)
+                                        .slice(0, 2)
+                                        .toUpperCase()}
+                                  </span>
+                                  <span className="member-suggestion__meta">
+                                    <strong>{member.displayName || member.username || member.id}</strong>
+                                    <small>{member.id}</small>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {quickActionTargets.warn && (
+                            <div className="member-pill">
+                              <span
+                                className="member-pill__avatar"
+                                style={
+                                  quickActionTargets.warn.avatar
+                                    ? { backgroundImage: `url(${quickActionTargets.warn.avatar})` }
+                                    : undefined
+                                }
+                              >
+                                {!quickActionTargets.warn.avatar &&
+                                  (quickActionTargets.warn.displayName ||
+                                    quickActionTargets.warn.username ||
+                                    quickActionTargets.warn.id)
+                                    .slice(0, 2)
+                                    .toUpperCase()}
+                              </span>
+                              <span>
+                                {quickActionTargets.warn.displayName ||
+                                  quickActionTargets.warn.username ||
+                                  quickActionTargets.warn.id}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="form-row">
+                          <label htmlFor="warn-reason">Reason</label>
+                          <textarea
+                            id="warn-reason"
+                            name="reason"
+                            rows={3}
+                            placeholder="Describe the violation..."
+                            value={quickActions.warn.reason}
+                            onChange={(event) => updateQuickAction('warn', { reason: event.target.value })}
+                            disabled={!authenticated || !selectedGuild || quickActions.warn.pending}
+                          />
+                        </div>
+                        <button type="submit" className="button button--primary" disabled={!authenticated || !selectedGuild || quickActions.warn.pending}>
+                          {quickActions.warn.pending ? 'Processing...' : 'Log warning'}
+                        </button>
+                        {quickActions.warn.feedback && (
+                          <p className="form-helper" style={feedbackPalette[quickActions.warn.feedback.type] ?? undefined}>
+                            {quickActions.warn.feedback.text}
+                          </p>
+                        )}
+                      </form>
+                    </div>
+                  ) : (
+                    <p className="placeholder">Select a server to use quick actions.</p>
                   )}
-                </form>
+                </>
+              ) : (
+                <p className="helper">Log in with your moderator account to unlock quick actions.</p>
+              )}
+            </div>
+          </section>
 
-                <form className="form quick-action" data-action="timeout" onSubmit={(event) => submitQuickAction(event, 'timeout')}>
-                  <h3>Timeout</h3>
+          <section className={`panel panel--collapsible ${collapsedPanels.filters ? 'panel--collapsed' : ''}`}>
+            <header className="panel__header">
+              <div>
+                <h2>Filters</h2>
+                <p>Choose which messages are automatically removed by the bot.</p>
+              </div>
+              <div className="panel__header-actions">
+                <button
+                  type="button"
+                  className="panel__toggle"
+                  aria-expanded={!collapsedPanels.filters}
+                  aria-controls="panel-filters"
+                  onClick={() => togglePanel('filters')}
+                >
+                  {collapsedPanels.filters ? 'Expand' : 'Collapse'}
+                  <span className="panel__toggle-icon" aria-hidden="true">▾</span>
+                </button>
+              </div>
+            </header>
+            <div className="panel__body filter-grid" id="panel-filters" hidden={collapsedPanels.filters}>
+              {Object.entries(FILTER_DETAILS).map(([key, details]) => (
+                <article key={key} className="filter-card">
+                  <header>
+                    <h3>{details.label}</h3>
+                    <p>{details.helper}</p>
+                  </header>
+                  <button
+                    type="button"
+                    className={`toggle ${filters[key] ? 'toggle--on' : 'toggle--off'}`}
+                    onClick={() => handleToggleFilter(key)}
+                    disabled={loading}
+                  >
+                    <span />
+                  </button>
+                </article>
+              ))}
+            </div>
+            <div className="panel__body keyword-manager" hidden={collapsedPanels.filters}>
+              <div className="form-row">
+                <label htmlFor="keyword-input">Custom keyword</label>
+                <div className="keyword-input">
+                  <input
+                    id="keyword-input"
+                    placeholder="Add word or phrase"
+                    value={keywordsInput}
+                    onChange={(event) => setKeywordsInput(event.target.value)}
+                    disabled={loading}
+                  />
+                  <button type="button" className="button button--primary" onClick={handleAddKeyword} disabled={loading}>
+                    Add
+                  </button>
+                </div>
+                <p className="form-helper">Keywords are matched case-insensitively.</p>
+              </div>
+              <ul className="keyword-list">
+                {keywordList.length === 0 ? (
+                  <li className="placeholder">No custom keywords yet.</li>
+                ) : (
+                  keywordList.map((keyword) => (
+                    <li key={keyword}>
+                      <span>{keyword}</span>
+                      <button type="button" onClick={() => handleRemoveKeyword(keyword)} disabled={loading}>
+                        Remove
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </div>
+          </section>
+
+          <section className={`panel panel--collapsible ${collapsedPanels.spam ? 'panel--collapsed' : ''}`}>
+            <header className="panel__header">
+              <div>
+                <h2>Spam controls</h2>
+                <p>Rate limit spammy senders and escalate automatically.</p>
+              </div>
+              <div className="panel__header-actions">
+                <button
+                  type="button"
+                  className="panel__toggle"
+                  aria-expanded={!collapsedPanels.spam}
+                  aria-controls="panel-spam"
+                  onClick={() => togglePanel('spam')}
+                >
+                  {collapsedPanels.spam ? 'Expand' : 'Collapse'}
+                  <span className="panel__toggle-icon" aria-hidden="true">▾</span>
+                </button>
+              </div>
+            </header>
+            <div className="panel__body spam-grid" id="panel-spam" hidden={collapsedPanels.spam}>
+              {loading ? (
+                <p className="placeholder">Loading configuration...</p>
+              ) : (
+                <>
                   <div className="form-row">
-                    <label htmlFor="timeout-guild">Guild ID</label>
+                    <label htmlFor="spam-messages">Messages per minute</label>
                     <input
-                      id="timeout-guild"
-                      name="guildId"
-                      list={guildDatalistId}
-                      placeholder="1234567890"
-                      value={quickActions.timeout.guildId || selectedGuild?.id || ''}
-                      onChange={(event) => updateQuickAction('timeout', { guildId: event.target.value })}
-                      disabled={!authenticated || !selectedGuild || quickActions.timeout.pending}
-                      required
+                      id="spam-messages"
+                      type="number"
+                      min="1"
+                      max="120"
+                      value={spam.messagesPerMinute ?? ''}
+                      onChange={(event) => handleSpamChange('messagesPerMinute', Number(event.target.value))}
                     />
+                    <p className="form-helper">Timeout users who exceed this rate.</p>
                   </div>
                   <div className="form-row">
-                    <label htmlFor="timeout-user">Member</label>
+                    <label htmlFor="spam-timeout">Timeout duration (minutes)</label>
                     <input
-                      id="timeout-user"
-                      name="user"
-                      list="member-suggest-timeout"
-                      placeholder="@user or ID"
-                      value={quickActions.timeout.user}
-                      onChange={(event) => handleMemberInput('timeout', event.target.value)}
-                      onBlur={() => handleMemberBlur('timeout')}
-                      disabled={!authenticated || !selectedGuild || quickActions.timeout.pending}
-                      required
-                    />
-                    <datalist id="member-suggest-timeout">
-                      {memberLookup.timeout.results.map((member) => (
-                        <option
-                          key={member.id}
-                          value={member.id}
-                          label={`${member.displayName || member.username || member.id} (${member.id})`}
-                        />
-                      ))}
-                    </datalist>
-                    {memberLookup.timeout.loading && <p className="form-helper">Searching members...</p>}
-                    {memberLookup.timeout.results.length > 0 && (
-                      <div className="member-suggestions">
-                        {memberLookup.timeout.results.map((member) => (
-                          <button
-                            type="button"
-                            key={member.id}
-                            className="member-suggestion"
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => handleMemberPick('timeout', member)}
-                          >
-                            <span
-                              className="member-suggestion__avatar"
-                              style={
-                                member.avatar
-                                  ? { backgroundImage: `url(${member.avatar})` }
-                                  : undefined
-                              }
-                            >
-                              {!member.avatar &&
-                                (member.displayName || member.username || member.id)
-                                  .slice(0, 2)
-                                  .toUpperCase()}
-                            </span>
-                            <span className="member-suggestion__meta">
-                              <strong>{member.displayName || member.username || member.id}</strong>
-                              <small>{member.id}</small>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {quickActionTargets.timeout && (
-                      <div className="member-pill">
-                        <span
-                          className="member-pill__avatar"
-                          style={
-                            quickActionTargets.timeout.avatar
-                              ? { backgroundImage: `url(${quickActionTargets.timeout.avatar})` }
-                              : undefined
-                          }
-                        >
-                          {!quickActionTargets.timeout.avatar &&
-                            (quickActionTargets.timeout.displayName ||
-                              quickActionTargets.timeout.username ||
-                              quickActionTargets.timeout.id)
-                              .slice(0, 2)
-                              .toUpperCase()}
-                        </span>
-                        <span>
-                          {quickActionTargets.timeout.displayName ||
-                            quickActionTargets.timeout.username ||
-                            quickActionTargets.timeout.id}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="form-row">
-                    <label htmlFor="timeout-duration">Duration (min)</label>
-                    <input
-                      id="timeout-duration"
-                      name="duration"
+                      id="spam-timeout"
                       type="number"
                       min="1"
                       max="10080"
-                      placeholder="60"
-                      value={quickActions.timeout.duration}
-                      onChange={(event) => updateQuickAction('timeout', { duration: event.target.value })}
-                      disabled={!authenticated || !selectedGuild || quickActions.timeout.pending}
-                      required
+                      value={spam.autoTimeoutMinutes ?? ''}
+                      onChange={(event) => handleSpamChange('autoTimeoutMinutes', Number(event.target.value))}
                     />
+                    <p className="form-helper">Length of automatic timeouts.</p>
                   </div>
                   <div className="form-row">
-                    <label htmlFor="timeout-reason">Reason</label>
+                    <label htmlFor="spam-escalation">Escalation after warnings</label>
                     <input
-                      id="timeout-reason"
-                      name="reason"
-                      placeholder="Spamming, abuse..."
-                      value={quickActions.timeout.reason}
-                      onChange={(event) => updateQuickAction('timeout', { reason: event.target.value })}
-                      disabled={!authenticated || !selectedGuild || quickActions.timeout.pending}
+                      id="spam-escalation"
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={spam.escalationAfterWarnings ?? ''}
+                      onChange={(event) => handleSpamChange('escalationAfterWarnings', Number(event.target.value))}
                     />
+                    <p className="form-helper">After this many warnings escalate the response.</p>
                   </div>
-                  <button
-                    type="submit"
-                    className="button button--primary"
-                    disabled={!authenticated || !selectedGuild || quickActions.timeout.pending}
-                  >
-                    {quickActions.timeout.pending ? 'Processing...' : 'Timeout member'}
-                  </button>
-                  {quickActions.timeout.feedback && (
-                    <p className="form-helper" style={feedbackPalette[quickActions.timeout.feedback.type] ?? undefined}>
-                      {quickActions.timeout.feedback.text}
-                    </p>
-                  )}
-                </form>
+                </>
+              )}
+            </div>
+          </section>
 
-                <form className="form quick-action" data-action="warn" onSubmit={(event) => submitQuickAction(event, 'warn')}>
-                  <h3>Warn</h3>
+          <section className={`panel panel--collapsible ${collapsedPanels.escalation ? 'panel--collapsed' : ''}`}>
+            <header className="panel__header">
+              <div>
+                <h2>Escalation ladder</h2>
+                <p>Fine-tune how many offences it takes to auto-timeout or ban.</p>
+              </div>
+              <div className="panel__header-actions">
+                <button
+                  type="button"
+                  className="panel__toggle"
+                  aria-expanded={!collapsedPanels.escalation}
+                  aria-controls="panel-escalation"
+                  onClick={() => togglePanel('escalation')}
+                >
+                  {collapsedPanels.escalation ? 'Expand' : 'Collapse'}
+                  <span className="panel__toggle-icon" aria-hidden="true">▾</span>
+                </button>
+              </div>
+            </header>
+            <div className="panel__body escalation-grid" id="panel-escalation" hidden={collapsedPanels.escalation}>
+              {loading ? (
+                <p className="placeholder">Loading...</p>
+              ) : (
+                <>
                   <div className="form-row">
-                    <label htmlFor="warn-guild">Guild ID</label>
+                    <label htmlFor="esc-warn">Warn threshold</label>
                     <input
-                      id="warn-guild"
-                      name="guildId"
-                      list={guildDatalistId}
+                      id="esc-warn"
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={escalation.warnThreshold ?? ''}
+                      onChange={(event) => handleEscalationChange('warnThreshold', Number(event.target.value))}
+                    />
+                    <p className="form-helper">Escalate after this many warns.</p>
+                  </div>
+                  <div className="form-row">
+                    <label htmlFor="esc-timeout">Timeout threshold</label>
+                    <input
+                      id="esc-timeout"
+                      type="number"
+                      min="1"
+                      max="10"
+                      value={escalation.timeoutThreshold ?? ''}
+                      onChange={(event) => handleEscalationChange('timeoutThreshold', Number(event.target.value))}
+                    />
+                    <p className="form-helper">Issue a timeout after this many warns.</p>
+                  </div>
+                  <div className="form-row">
+                    <label htmlFor="esc-ban">Ban threshold</label>
+                    <input
+                      id="esc-ban"
+                      type="number"
+                      min="1"
+                      max="15"
+                      value={escalation.banThreshold ?? ''}
+                      onChange={(event) => handleEscalationChange('banThreshold', Number(event.target.value))}
+                    />
+                    <p className="form-helper">Ban the member after this many total offences.</p>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+
+          <section className={`panel panel--collapsible ${collapsedPanels.alerts ? 'panel--collapsed' : ''}`}>
+            <header className="panel__header">
+              <div>
+                <h2>Alerts &amp; notifications</h2>
+                <p>Control who gets notified when automod fires.</p>
+              </div>
+              <div className="panel__header-actions">
+                <button
+                  type="button"
+                  className="panel__toggle"
+                  aria-expanded={!collapsedPanels.alerts}
+                  aria-controls="panel-alerts"
+                  onClick={() => togglePanel('alerts')}
+                >
+                  {collapsedPanels.alerts ? 'Expand' : 'Collapse'}
+                  <span className="panel__toggle-icon" aria-hidden="true">▾</span>
+                </button>
+              </div>
+            </header>
+            <div className="panel__body form-grid" id="panel-alerts" hidden={collapsedPanels.alerts}>
+              {loading ? (
+                <p className="placeholder">Loading...</p>
+              ) : (
+                <>
+                  <div className="form-row">
+                    <label htmlFor="log-channel">Log channel ID</label>
+                    <input
+                      id="log-channel"
+                      type="text"
                       placeholder="1234567890"
-                      value={quickActions.warn.guildId || selectedGuild?.id || ''}
-                      onChange={(event) => updateQuickAction('warn', { guildId: event.target.value })}
-                      disabled={!authenticated || !selectedGuild || quickActions.warn.pending}
-                      required
+                      value={alerts.logChannelId ?? ''}
+                      onChange={(event) => handleAlertsChange('logChannelId', event.target.value)}
                     />
+                    <p className="form-helper">Where automod events are posted.</p>
                   </div>
                   <div className="form-row">
-                    <label htmlFor="warn-user">Member</label>
+                    <label htmlFor="staff-role">Staff role ID</label>
                     <input
-                      id="warn-user"
-                      name="user"
-                      list="member-suggest-warn"
-                      placeholder="@user or ID"
-                      value={quickActions.warn.user}
-                      onChange={(event) => handleMemberInput('warn', event.target.value)}
-                      onBlur={() => handleMemberBlur('warn')}
-                      disabled={!authenticated || !selectedGuild || quickActions.warn.pending}
-                      required
+                      id="staff-role"
+                      type="text"
+                      placeholder="1234567890"
+                      value={alerts.staffRoleId ?? ''}
+                      onChange={(event) => handleAlertsChange('staffRoleId', event.target.value)}
                     />
-                    <datalist id="member-suggest-warn">
-                      {memberLookup.warn.results.map((member) => (
-                        <option
-                          key={member.id}
-                          value={member.id}
-                          label={`${member.displayName || member.username || member.id} (${member.id})`}
-                        />
-                      ))}
-                    </datalist>
-                    {memberLookup.warn.loading && <p className="form-helper">Searching members...</p>}
-                    {memberLookup.warn.results.length > 0 && (
-                      <div className="member-suggestions">
-                        {memberLookup.warn.results.map((member) => (
-                          <button
-                            type="button"
-                            key={member.id}
-                            className="member-suggestion"
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => handleMemberPick('warn', member)}
-                          >
-                            <span
-                              className="member-suggestion__avatar"
-                              style={
-                                member.avatar
-                                  ? { backgroundImage: `url(${member.avatar})` }
-                                  : undefined
-                              }
-                            >
-                              {!member.avatar &&
-                                (member.displayName || member.username || member.id)
-                                  .slice(0, 2)
-                                  .toUpperCase()}
-                            </span>
-                            <span className="member-suggestion__meta">
-                              <strong>{member.displayName || member.username || member.id}</strong>
-                              <small>{member.id}</small>
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {quickActionTargets.warn && (
-                      <div className="member-pill">
-                        <span
-                          className="member-pill__avatar"
-                          style={
-                            quickActionTargets.warn.avatar
-                              ? { backgroundImage: `url(${quickActionTargets.warn.avatar})` }
-                              : undefined
-                          }
-                        >
-                          {!quickActionTargets.warn.avatar &&
-                            (quickActionTargets.warn.displayName ||
-                              quickActionTargets.warn.username ||
-                              quickActionTargets.warn.id)
-                              .slice(0, 2)
-                              .toUpperCase()}
-                        </span>
-                        <span>
-                          {quickActionTargets.warn.displayName ||
-                            quickActionTargets.warn.username ||
-                            quickActionTargets.warn.id}
-                        </span>
-                      </div>
-                    )}
+                    <p className="form-helper">Role to ping when escalation happens.</p>
                   </div>
                   <div className="form-row">
-                    <label htmlFor="warn-reason">Reason</label>
+                    <label htmlFor="notify-auto">Notify on auto-action</label>
+                    <button
+                      id="notify-auto"
+                      type="button"
+                      className={`toggle ${alerts.notifyOnAutoAction ? 'toggle--on' : 'toggle--off'}`}
+                      onClick={() => handleAlertsChange('notifyOnAutoAction', !alerts.notifyOnAutoAction)}
+                    >
+                      <span />
+                    </button>
+                    <p className="form-helper">Toggle staff notifications for every automod action.</p>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+
+          <section className={`panel panel--collapsible ${collapsedPanels.templates ? 'panel--collapsed' : ''}`}>
+            <header className="panel__header">
+              <div>
+                <h2>DM templates</h2>
+                <p>Customize the message members receive when a punishment is applied.</p>
+              </div>
+              <div className="panel__header-actions">
+                <button
+                  type="button"
+                  className="panel__toggle"
+                  aria-expanded={!collapsedPanels.templates}
+                  aria-controls="panel-templates"
+                  onClick={() => togglePanel('templates')}
+                >
+                  {collapsedPanels.templates ? 'Expand' : 'Collapse'}
+                  <span className="panel__toggle-icon" aria-hidden="true">▾</span>
+                </button>
+              </div>
+            </header>
+            <div className="panel__body template-grid" id="panel-templates" hidden={collapsedPanels.templates}>
+              {loading ? (
+                <p className="placeholder">Loading...</p>
+              ) : (
+                Object.entries(dmTemplates).map(([key, template]) => (
+                  <div key={key} className="template-card">
+                    <h3>{TEMPLATE_LABELS[key] ?? key}</h3>
+                    <p className="helper">Tokens supported: {'{guild}'}, {'{reason}'}, {'{duration}'}</p>
                     <textarea
-                      id="warn-reason"
-                      name="reason"
-                      rows={3}
-                      placeholder="Describe the violation..."
-                      value={quickActions.warn.reason}
-                      onChange={(event) => updateQuickAction('warn', { reason: event.target.value })}
-                      disabled={!authenticated || !selectedGuild || quickActions.warn.pending}
+                      rows={4}
+                      value={template}
+                      onChange={(event) => handleTemplateChange(key, event.target.value)}
                     />
                   </div>
-                  <button
-                    type="submit"
-                    className="button button--primary"
-                    disabled={!authenticated || !selectedGuild || quickActions.warn.pending}
-                  >
-                    {quickActions.warn.pending ? 'Processing...' : 'Log warning'}
-                  </button>
-                  {quickActions.warn.feedback && (
-                    <p className="form-helper" style={feedbackPalette[quickActions.warn.feedback.type] ?? undefined}>
-                      {quickActions.warn.feedback.text}
-                    </p>
-                  )}
-                </form>
+                ))
+              )}
+            </div>
+          </section>
+
+          <section className="panel">
+            <header className="panel__header">
+              <div>
+                <h2>Review &amp; save</h2>
+                <p>Changes affect future automod actions instantly after saving.</p>
               </div>
-            ) : (
-              <p className="placeholder">Select a guild in the sidebar to run quick actions.</p>
-            )}
-          </>
-        )}
-      </CollapsiblePanel>
-
-      <section className="panel case-hub">
-        <header className="panel__header">
-          <div>
-            <h2>Case inbox</h2>
-            <p>Converse com membros anonimamente, organize ações e finalize casos.</p>
-          </div>
-          <div className="case-hub__toolbar">
-            <span className="panel__meta">
-              {caseInbox.loading ? 'Atualizando casos...' : caseCountSummary}
-            </span>
-            <label className="visually-hidden" htmlFor="case-filter">
-              Filtrar casos
-            </label>
-            <select
-              id="case-filter"
-              className="case-hub__filter"
-              value={caseFilter}
-              onChange={(event) => setCaseFilter(event.target.value)}
-              disabled={caseInbox.loading}
-            >
-              {CASE_FILTER_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="button button--ghost"
-              onClick={loadCases}
-              disabled={caseInbox.loading}
-            >
-              Atualizar
-            </button>
-          </div>
-        </header>
-        <div className="panel__body case-hub__body">
-          <aside className="case-hub__list" aria-label="Fila de casos">
-            {caseInbox.loading ? (
-              <p className="placeholder">Carregando casos...</p>
-            ) : caseInbox.error ? (
-              <p className="placeholder">{caseInbox.error}</p>
-            ) : caseInbox.items.length === 0 ? (
-              <p className="placeholder">{formatEmptyCaseMessage(caseFilter)}</p>
-            ) : (
-              <ul className="case-hub__items">
-                {caseInbox.items.map((item) => {
-                  const isActive = item.id === caseInbox.selectedCaseId
-                  const participant =
-                    item.memberTag || item.userTag || item.memberName || item.userName || item.userId
-                  const lastUpdate = item.updatedAt || item.createdAt
-                  return (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        className={`case-card${isActive ? ' case-card--active' : ''}`}
-                        onClick={() => handleSelectCase(item.id)}
-                      >
-                        <span className="case-card__title">{item.subject || item.reason || `Caso ${item.id}`}</span>
-                        <span className="case-card__participant">{participant || 'Membro desconhecido'}</span>
-                        <div className="case-card__footer">
-                          <span className={`case-status case-status--${(item.status || 'open').toLowerCase()}`}>
-                            {formatCaseStatus(item.status)}
-                          </span>
-                          {item.unreadCount > 0 && (
-                            <span className="case-card__badge" aria-label={`${item.unreadCount} novas mensagens`}>
-                              {item.unreadCount}
-                            </span>
-                          )}
-                          {lastUpdate && (
-                            <span className="case-card__time">{formatDateTime(lastUpdate)}</span>
-                          )}
-                        </div>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            )}
-          </aside>
-          <div className="case-hub__conversation">
-            {!caseInbox.selectedCaseId ? (
-              <div className="case-hub__placeholder">
-                <h3>Selecione um caso</h3>
-                <p>Escolha um caso na lista para visualizar o histórico, enviar mensagens e aplicar ações rápidas.</p>
+            </header>
+            <div className="panel__body">
+              <div className="form-row">
+                <label>Status</label>
+                <p className="list-subtext">
+                  {feedback ? feedback : config ? `Loaded ${formatDateTime(Date.now())}` : 'No changes yet'}
+                </p>
               </div>
-            ) : (
-              <div className="case-hub__conversation-wrapper">
-                <header className="case-hub__conversation-header">
-                  <div>
-                    <h3>{caseDetail.subject || 'Conversa com membro'}</h3>
-                    <p>
-                      {caseDetail.openedBy
-                        ? `Aberto por ${caseDetail.openedBy.tag || caseDetail.openedBy.displayName || caseDetail.openedBy.id}`
-                        : 'Aguardando dados do caso'}
-                      {caseDetail.openedAt ? ` • ${formatDateTime(caseDetail.openedAt)}` : ''}
-                    </p>
-                    {caseDetail.participants.length > 0 && (
-                      <p className="case-hub__participants">
-                        Participantes:{' '}
-                        {caseDetail.participants
-                          .map((participant) =>
-                            participant.displayName ||
-                            participant.username ||
-                            participant.tag ||
-                            participant.id
-                          )
-                          .join(', ')}
-                      </p>
-                    )}
-                  </div>
-                  <div className="case-hub__conversation-tools" ref={caseMenuRef}>
-                    <span className={`case-status case-status--${(caseDetail.status || 'open').toLowerCase()}`}>
-                      {formatCaseStatus(caseDetail.status)}
-                    </span>
-                    <button
-                      type="button"
-                      className="button button--ghost case-hub__menu-trigger"
-                      onClick={() => setCaseMenuOpen((prev) => !prev)}
-                      aria-haspopup="true"
-                      aria-expanded={caseMenuOpen}
-                    >
-                      ⋮
-                    </button>
-                    {caseMenuOpen && (
-                      <ul className="case-hub__menu" role="menu">
-                        <li role="none">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => handleUpdateCaseStatus('open')}
-                            disabled={caseDetail.statusUpdating}
-                          >
-                            Abrir caso
-                          </button>
-                        </li>
-                        <li role="none">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => handleUpdateCaseStatus('pending-response')}
-                            disabled={caseDetail.statusUpdating}
-                          >
-                            Marcar como aguardando resposta
-                          </button>
-                        </li>
-                        <li role="none">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => handleUpdateCaseStatus('closed')}
-                            disabled={caseDetail.statusUpdating}
-                          >
-                            Fechar caso
-                          </button>
-                        </li>
-                        <li role="none">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => handleUpdateCaseStatus('archived')}
-                            disabled={caseDetail.statusUpdating || archivedCase}
-                          >
-                            {archivedCase ? 'Caso arquivado' : 'Arquivar caso'}
-                          </button>
-                        </li>
-                        <li role="none">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={handleDeleteCase}
-                            disabled={caseDetail.statusUpdating}
-                          >
-                            Excluir caso
-                          </button>
-                        </li>
-                      </ul>
-                    )}
-                  </div>
-                </header>
-
-                <div className="case-hub__conversation-body" aria-live="polite">
-                  {caseDetail.loading ? (
-                    <p className="placeholder">Carregando mensagens...</p>
-                  ) : caseDetail.messages.length === 0 ? (
-                    <p className="placeholder">Nenhuma mensagem registrada neste caso ainda.</p>
-                  ) : (
-                    <ul className="case-messages">
-                      {caseDetail.messages.map((message, index) => {
-                        const role = (message.role || message.authorRole || 'member').toLowerCase()
-                        const key = message.id || `${message.createdAt || index}-${index}`
-                        const authorLabel =
-                          message.authorTag ||
-                          message.author ||
-                          message.authorName ||
-                          message.username ||
-                          (role === 'moderator' ? 'Equipe de moderação' : 'Membro')
-                        return (
-                          <li key={key} className={`case-message case-message--${role}`}>
-                            <header className="case-message__meta">
-                              <strong>{authorLabel}</strong>
-                              {message.createdAt && (
-                                <span>{formatDateTime(message.createdAt)}</span>
-                              )}
-                            </header>
-                            <p className="case-message__content">{message.content ?? ''}</p>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  )}
-                </div>
-
-                <form className="case-composer" onSubmit={handleSendCaseMessage}>
-                  <label className="visually-hidden" htmlFor="case-reply">
-                    Responder ao membro
-                  </label>
-                  <textarea
-                    id="case-reply"
-                    placeholder={
-                      conversationLocked
-                        ? 'O caso está encerrado ou arquivado. Reabra para responder.'
-                        : 'Digite uma resposta para o membro...'
-                    }
-                    value={caseReply}
-                    onChange={(event) => setCaseReply(event.target.value)}
-                    disabled={
-                      !authenticated ||
-                      caseDetail.sending ||
-                      conversationLocked
-                    }
-                    rows={4}
-                  />
-                  <div className="case-composer__footer">
-                    {caseDetail.error && <p className="form-helper form-helper--error">{caseDetail.error}</p>}
-                    <button
-                      type="submit"
-                      className="button button--primary"
-                      disabled={
-                        !authenticated ||
-                        caseDetail.sending ||
-                        !caseInbox.selectedCaseId ||
-                        conversationLocked
-                      }
-                    >
-                      {caseDetail.sending ? 'Enviando...' : 'Enviar mensagem'}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
-      <CollapsiblePanel
-        sectionKey="filters"
-        title="Filters"
-        description="Choose which messages are automatically removed by the bot."
-        collapsed={collapsedPanels.filters}
-        onToggle={() => togglePanel('filters')}
-      >
-        <div className="filter-grid">
-          {Object.entries(FILTER_DETAILS).map(([key, details]) => (
-            <article key={key} className="filter-card">
-              <header>
-                <h3>{details.label}</h3>
-                <p>{details.helper}</p>
-              </header>
               <button
                 type="button"
-                className={`toggle ${filters[key] ? 'toggle--on' : 'toggle--off'}`}
-                onClick={() => handleToggleFilter(key)}
-                disabled={loading}
+                className="button button--primary"
+                onClick={handleSave}
+                disabled={!authenticated || saving || !config}
               >
-                <span />
-              </button>
-            </article>
-          ))}
-        </div>
-        <div className="keyword-manager">
-          <div className="form-row">
-            <label htmlFor="keyword-input">Custom keyword</label>
-            <div className="keyword-input">
-              <input
-                id="keyword-input"
-                placeholder="Add word or phrase"
-                value={keywordsInput}
-                onChange={(event) => setKeywordsInput(event.target.value)}
-                disabled={loading}
-              />
-              <button type="button" className="button button--primary" onClick={handleAddKeyword} disabled={loading}>
-                Add
+                {saving ? 'Saving...' : 'Save moderation configuration'}
               </button>
             </div>
-            <p className="form-helper">Keywords are matched case-insensitively.</p>
-          </div>
-          <ul className="keyword-list">
-            {keywordList.length === 0 ? (
-              <li className="placeholder">No custom keywords yet.</li>
-            ) : (
-              keywordList.map((keyword) => (
-                <li key={keyword}>
-                  <span>{keyword}</span>
-                  <button type="button" onClick={() => handleRemoveKeyword(keyword)} disabled={loading}>
-                    Remove
-                  </button>
-                </li>
-              ))
-            )}
-          </ul>
+          </section>
         </div>
-      </CollapsiblePanel>
-
-      <CollapsiblePanel
-        sectionKey="spam"
-        title="Spam controls"
-        description="Rate limit spammy senders and escalate automatically."
-        collapsed={collapsedPanels.spam}
-        onToggle={() => togglePanel('spam')}
-      >
-        {loading ? (
-          <p className="placeholder">Loading configuration...</p>
-        ) : (
-          <div className="spam-grid">
-            <div className="form-row">
-              <label htmlFor="spam-messages">Messages per minute</label>
-              <input
-                id="spam-messages"
-                type="number"
-                min="1"
-                max="120"
-                value={spam.messagesPerMinute ?? ''}
-                onChange={(event) => handleSpamChange('messagesPerMinute', Number(event.target.value))}
-              />
-              <p className="form-helper">Timeout users who exceed this rate.</p>
-            </div>
-            <div className="form-row">
-              <label htmlFor="spam-timeout">Timeout duration (minutes)</label>
-              <input
-                id="spam-timeout"
-                type="number"
-                min="1"
-                max="10080"
-                value={spam.autoTimeoutMinutes ?? ''}
-                onChange={(event) => handleSpamChange('autoTimeoutMinutes', Number(event.target.value))}
-              />
-              <p className="form-helper">Length of automatic timeouts.</p>
-            </div>
-            <div className="form-row">
-              <label htmlFor="spam-escalation">Escalation after warnings</label>
-              <input
-                id="spam-escalation"
-                type="number"
-                min="1"
-                max="10"
-                value={spam.escalationAfterWarnings ?? ''}
-                onChange={(event) => handleSpamChange('escalationAfterWarnings', Number(event.target.value))}
-              />
-              <p className="form-helper">After this many warnings escalate the response.</p>
-            </div>
-          </div>
-        )}
-      </CollapsiblePanel>
-
-      <CollapsiblePanel
-        sectionKey="escalation"
-        title="Escalation ladder"
-        description="Fine-tune how many offences it takes to auto-timeout or ban."
-        collapsed={collapsedPanels.escalation}
-        onToggle={() => togglePanel('escalation')}
-      >
-        {loading ? (
-          <p className="placeholder">Loading...</p>
-        ) : (
-          <div className="escalation-grid">
-            <div className="form-row">
-              <label htmlFor="esc-warn">Warn threshold</label>
-              <input
-                id="esc-warn"
-                type="number"
-                min="1"
-                max="10"
-                value={escalation.warnThreshold ?? ''}
-                onChange={(event) => handleEscalationChange('warnThreshold', Number(event.target.value))}
-              />
-              <p className="form-helper">Escalate after this many warns.</p>
-            </div>
-            <div className="form-row">
-              <label htmlFor="esc-timeout">Timeout threshold</label>
-              <input
-                id="esc-timeout"
-                type="number"
-                min="1"
-                max="10"
-                value={escalation.timeoutThreshold ?? ''}
-                onChange={(event) => handleEscalationChange('timeoutThreshold', Number(event.target.value))}
-              />
-              <p className="form-helper">Issue a timeout after this many warns.</p>
-            </div>
-            <div className="form-row">
-              <label htmlFor="esc-ban">Ban threshold</label>
-              <input
-                id="esc-ban"
-                type="number"
-                min="1"
-                max="15"
-                value={escalation.banThreshold ?? ''}
-                onChange={(event) => handleEscalationChange('banThreshold', Number(event.target.value))}
-              />
-              <p className="form-helper">Ban the member after this many total offences.</p>
-            </div>
-          </div>
-        )}
-      </CollapsiblePanel>
-
-      <CollapsiblePanel
-        sectionKey="alerts"
-        title="Alerts &amp; notifications"
-        description="Control who gets notified when automod fires."
-        collapsed={collapsedPanels.alerts}
-        onToggle={() => togglePanel('alerts')}
-      >
-        {loading ? (
-          <p className="placeholder">Loading...</p>
-        ) : (
-          <div className="form-grid">
-            <div className="form-row">
-              <label htmlFor="log-channel">Log channel ID</label>
-              <input
-                id="log-channel"
-                type="text"
-                placeholder="1234567890"
-                value={alerts.logChannelId ?? ''}
-                onChange={(event) => handleAlertsChange('logChannelId', event.target.value)}
-              />
-              <p className="form-helper">Where automod events are posted.</p>
-            </div>
-            <div className="form-row">
-              <label htmlFor="staff-role">Staff role ID</label>
-              <input
-                id="staff-role"
-                type="text"
-                placeholder="1234567890"
-                value={alerts.staffRoleId ?? ''}
-                onChange={(event) => handleAlertsChange('staffRoleId', event.target.value)}
-              />
-              <p className="form-helper">Role to ping when escalation happens.</p>
-            </div>
-            <div className="form-row">
-              <label htmlFor="notify-auto">Notify on auto-action</label>
-              <button
-                id="notify-auto"
-                type="button"
-                className={`toggle ${alerts.notifyOnAutoAction ? 'toggle--on' : 'toggle--off'}`}
-                onClick={() => handleAlertsChange('notifyOnAutoAction', !alerts.notifyOnAutoAction)}
-              >
-                <span />
-              </button>
-              <p className="form-helper">Toggle staff notifications for every automod action.</p>
-            </div>
-          </div>
-        )}
-      </CollapsiblePanel>
-
-      <CollapsiblePanel
-        sectionKey="templates"
-        title="DM templates"
-        description="Customize the message members receive when a punishment is applied."
-        collapsed={collapsedPanels.templates}
-        onToggle={() => togglePanel('templates')}
-      >
-        {loading ? (
-          <p className="placeholder">Loading...</p>
-        ) : (
-          <div className="template-grid">
-            {Object.entries(dmTemplates).map(([key, template]) => (
-              <div key={key} className="template-card">
-                <h3>{TEMPLATE_LABELS[key] ?? key}</h3>
-                <p className="helper">Tokens supported: {'{guild}'}, {'{reason}'}, {'{duration}'}</p>
-                <textarea
-                  rows={4}
-                  value={template}
-                  onChange={(event) => handleTemplateChange(key, event.target.value)}
-                />
-              </div>
-            ))}
-          </div>
-        )}
-      </CollapsiblePanel>
-
-      <CollapsiblePanel
-        sectionKey="review"
-        title="Review &amp; save"
-        description="Changes affect future automod actions instantly after saving."
-        collapsed={collapsedPanels.review}
-        onToggle={() => togglePanel('review')}
-      >
-        <div className="form-row">
-          <label>Status</label>
-          <p className="list-subtext">
-            {feedback ? feedback : config ? `Loaded ${formatDateTime(Date.now())}` : 'No changes yet'}
-          </p>
-        </div>
-        <button
-          type="button"
-          className="button button--primary"
-          onClick={handleSave}
-          disabled={!authenticated || saving || !config}
-        >
-          {saving ? 'Saving...' : 'Save moderation configuration'}
-        </button>
-      </CollapsiblePanel>
+      </div>
     </div>
   )
 
@@ -2176,18 +2193,18 @@ function formatCaseStatus(status) {
   const value = getStatusValue(status)
   switch (value) {
     case 'pending-response':
-      return 'Aguardando resposta'
+      return 'Awaiting member response'
     case 'pending':
-      return 'Pendente'
+      return 'Pending'
     case 'closed':
-      return 'Fechado'
+      return 'Closed'
     case 'archived':
-      return 'Arquivado'
+      return 'Archived'
     case 'escalated':
-      return 'Escalonado'
+      return 'Escalated'
     case 'open':
     default:
-      return 'Aberto'
+      return 'Open'
   }
 }
 
@@ -2238,20 +2255,20 @@ function resolveCaseFilterParam(filter) {
 
 function formatCaseFilterSummary(filter, count) {
   const value = String(filter ?? 'all').toLowerCase()
-  const noun = count === 1 ? 'caso' : 'casos'
+  const noun = count === 1 ? 'case' : 'cases'
   switch (value) {
     case 'active':
-      return `${count} ${noun} ativos`
+      return `${count} active ${noun}`
     case 'archived':
-      return `${count} ${noun} arquivados`
+      return `${count} archived ${noun}`
     case 'closed':
-      return `${count} ${noun} fechados`
+      return `${count} closed ${noun}`
     case 'pending-response':
-      return `${count} ${noun} aguardando resposta`
+      return `${count} ${noun} awaiting response`
     case 'open':
-      return `${count} ${noun} abertos`
+      return `${count} open ${noun}`
     case 'escalated':
-      return `${count} ${noun} escalonados`
+      return `${count} escalated ${noun}`
     case 'all':
     default:
       return `${count} ${noun}`
@@ -2262,19 +2279,19 @@ function formatEmptyCaseMessage(filter) {
   const value = String(filter ?? 'all').toLowerCase()
   switch (value) {
     case 'active':
-      return 'Nenhum caso ativo. Os membros podem iniciar uma conversa pelo bot.'
+      return 'No active cases. Members can start a conversation through the bot.'
     case 'open':
-      return 'Nenhum caso aberto.'
+      return 'No open cases.'
     case 'archived':
-      return 'Nenhum caso arquivado.'
+      return 'No archived cases.'
     case 'closed':
-      return 'Nenhum caso fechado.'
+      return 'No closed cases.'
     case 'pending-response':
-      return 'Nenhum caso aguardando resposta.'
+      return 'No cases awaiting a member response.'
     case 'escalated':
-      return 'Nenhum caso escalonado.'
+      return 'No escalated cases.'
     case 'all':
     default:
-      return 'Nenhum caso encontrado.'
+      return 'No cases found.'
   }
 }

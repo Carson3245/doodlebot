@@ -1,7 +1,8 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../authContext.js'
-import logoSrc from '../assets/logo.svg'
+
+const LOGO_SRC = '/assets/logo.svg'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -24,7 +25,7 @@ export default function LoginPage() {
     <div className="page auth-page">
       <div className="auth-card">
         <div className="auth-card__logo">
-          <img src={logoSrc} alt="Planet Doodle logo" />
+          <img src={LOGO_SRC} alt="Planet Doodle logo" />
         </div>
         <h1 className="auth-card__title">Welcome back</h1>
         <p className="auth-card__subtitle">Sign in with your Discord account to manage your servers.</p>

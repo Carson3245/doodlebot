@@ -27,6 +27,7 @@ if (!token) {
 
 const client = createClient();
 const moderation = new ModerationEngine(client);
+client.moderation = moderation;
 
 async function bootstrap() {
   await loadStyle();

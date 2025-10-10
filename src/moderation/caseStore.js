@@ -34,6 +34,7 @@ const defaultData = {
     warnings: 0,
     timeouts: 0,
     bans: 0,
+    kicks: 0,
     cases: 0
   },
   cases: [],
@@ -436,6 +437,7 @@ export async function getModerationStats() {
     warnings: data.stats.warnings ?? 0,
     timeouts: data.stats.timeouts ?? 0,
     bans: data.stats.bans ?? 0,
+    kicks: data.stats.kicks ?? 0,
     cases: data.stats.cases ?? data.cases.length
   }
 }
@@ -463,6 +465,7 @@ function buildStatsSnapshot(data) {
     warnings: stats.warnings ?? 0,
     timeouts: stats.timeouts ?? 0,
     bans: stats.bans ?? 0,
+    kicks: stats.kicks ?? 0,
     cases: casesCount
   }
 }
@@ -1098,6 +1101,8 @@ function actionToStatKey(action) {
       return 'timeouts'
     case 'ban':
       return 'bans'
+    case 'kick':
+      return 'kicks'
     default:
       return null
   }
@@ -1112,6 +1117,7 @@ function defaultTotals() {
     warnings: 0,
     timeouts: 0,
     bans: 0,
+    kicks: 0,
     cases: 0,
     lastActionAt: null
   }

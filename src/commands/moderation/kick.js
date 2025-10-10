@@ -26,6 +26,7 @@ export async function execute(interaction) {
     return;
   }
 
+  const moderation = interaction.client?.moderation;
   const member = await interaction.guild.members.fetch(target.id).catch(() => null);
 
   if (!member) {
@@ -38,6 +39,33 @@ export async function execute(interaction) {
     return;
   }
 
+  if (moderation) {
+    try {
+      await moderation.kick({
+        guildId: interaction.guild.id,
+        userId: target.id,
+        moderatorId: interaction.user.id,
+        moderatorTag: interaction.user.tag,
+        reason
+      });
+      await interaction.reply({
+        content: `👢 Kicked **${target.tag}**. Reason: ${reason}`,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    } catch (error) {
+      console.error('Failed to kick member via moderation engine:', error);
+      await interaction.reply({
+        content: error?.message || 'I could not kick that member.',
+        ephemeral: true
+      });
+      return;
+    }
+  }
+
   await member.kick(reason);
-  await interaction.reply(`**${target.tag}** was kicked. Reason: ${reason}`);
+  await interaction.reply({
+    content: `👢 Kicked **${target.tag}**. Reason: ${reason}`,
+    allowedMentions: { parse: [] }
+  });
 }

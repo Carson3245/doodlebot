@@ -845,6 +845,8 @@ export function createDashboard(client, moderation) {
           return;
         }
         await moderation.timeout({ guildId, userId, moderatorId, moderatorTag, reason, durationMinutes });
+      } else if (action === 'kick') {
+        await moderation.kick({ guildId, userId, moderatorId, moderatorTag, reason });
       } else if (action === 'ban') {
         await moderation.ban({ guildId, userId, moderatorId, moderatorTag, reason });
       } else {

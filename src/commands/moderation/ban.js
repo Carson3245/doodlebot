@@ -26,18 +26,46 @@ export async function execute(interaction) {
     return;
   }
 
+  const moderation = interaction.client?.moderation;
   const member = await interaction.guild.members.fetch(target.id).catch(() => null);
+
+  if (member && !member.bannable) {
+    await interaction.reply({ content: 'I do not have permission to ban that user.', ephemeral: true });
+    return;
+  }
+
+  if (moderation) {
+    try {
+      await moderation.ban({
+        guildId: interaction.guild.id,
+        userId: target.id,
+        moderatorId: interaction.user.id,
+        moderatorTag: interaction.user.tag,
+        reason
+      });
+      await interaction.reply({
+        content: `🔨 Banned **${target.tag}**. Reason: ${reason}`,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    } catch (error) {
+      console.error('Failed to ban member via moderation engine:', error);
+      await interaction.reply({
+        content: error?.message || 'I could not ban that member.',
+        ephemeral: true
+      });
+      return;
+    }
+  }
 
   if (!member) {
     await interaction.reply({ content: 'I could not find that member in the server.', ephemeral: true });
     return;
   }
 
-  if (!member.bannable) {
-    await interaction.reply({ content: 'I do not have permission to ban that user.', ephemeral: true });
-    return;
-  }
-
   await member.ban({ reason });
-  await interaction.reply(`**${target.tag}** was banned. Reason: ${reason}`);
+  await interaction.reply({
+    content: `🔨 Banned **${target.tag}**. Reason: ${reason}`,
+    allowedMentions: { parse: [] }
+  });
 }

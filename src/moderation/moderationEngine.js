@@ -128,6 +128,25 @@ export class ModerationEngine {
     })
   }
 
+  async kick({ guildId, userId, moderatorId, moderatorTag, reason }) {
+    await this.init()
+    const context = await this.resolveContext({ guildId, userId, moderatorId })
+    if (!context || !context.member) {
+      throw new Error('Unable to resolve member for kick action')
+    }
+    const { guild, member, moderatorTag: resolvedTag } = context
+    await this.applyPenalty('kick', {
+      guild,
+      member,
+      userId,
+      userTag: member.user?.tag ?? null,
+      moderatorId,
+      moderatorTag: moderatorTag ?? resolvedTag ?? null,
+      reason,
+      source: 'dashboard'
+    })
+  }
+
   async ban({ guildId, userId, moderatorId, moderatorTag, reason }) {
     await this.init()
     const context = await this.resolveContext({ guildId, userId, moderatorId, fetchMemberOptional: true })
@@ -365,6 +384,10 @@ export class ModerationEngine {
         await this.ensureMemberModeratable(member, 'timeout')
         await member.timeout(durationMs, reason ?? 'Timeout applied.')
         await this.sendDm(member, 'timeout', reason, duration)
+      } else if (action === 'kick') {
+        await this.ensureMemberModeratable(member, 'kick')
+        await member.kick(reason ?? 'Kick issued.')
+        await this.sendDm(member, 'kick', reason)
       } else if (action === 'ban') {
         if (member?.bannable) {
           await member.ban({ reason: reason ?? 'Ban issued.' })
@@ -402,6 +425,12 @@ export class ModerationEngine {
   async ensureMemberModeratable(member, action) {
     if (!member) {
       throw new Error(`Cannot ${action}: member not found`)
+    }
+    if (action === 'kick') {
+      if (!member.kickable) {
+        throw new Error('Cannot kick: missing permissions or hierarchy issue')
+      }
+      return
     }
     if (!member.moderatable) {
       throw new Error(`Cannot ${action}: missing permissions or hierarchy issue`)
@@ -887,6 +916,8 @@ export class ModerationEngine {
         return 0xffc107
       case 'timeout':
         return 0x02a9f7
+      case 'kick':
+        return 0xff7043
       case 'ban':
         return 0xd32f2f
       default:
@@ -935,6 +966,8 @@ function defaultTemplateFor(action) {
       return 'You received a warning in {guild}. Reason: {reason}'
     case 'timeout':
       return 'You have been timed out in {guild}. Duration: {duration} minutes. Reason: {reason}'
+    case 'kick':
+      return 'You have been removed from {guild}. Reason: {reason}'
     case 'ban':
       return 'You have been banned from {guild}. Reason: {reason}'
     default:
