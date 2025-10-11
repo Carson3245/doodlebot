@@ -128,6 +128,21 @@ export default function ModerationPage() {
       `${formatCaseFilterSummary(caseFilter, caseInbox.items.length)} • ${formatCaseCategorySummary(caseCategoryFilter)}`,
     [caseFilter, caseCategoryFilter, caseInbox.items.length]
   )
+  const openCaseCount = useMemo(
+    () =>
+      caseInbox.items.reduce(
+        (count, item) => (!isCaseTerminal(item.status) ? count + 1 : count),
+        0
+      ),
+    [caseInbox.items]
+  )
+  const pendingResponseCount = useMemo(
+    () =>
+      caseInbox.items.filter(
+        (item) => (item.status ?? '').toLowerCase() === 'pending-response'
+      ).length,
+    [caseInbox.items]
+  )
   const conversationLocked = isCaseTerminal(caseDetail.status)
   const archivedCase = isCaseArchived(caseDetail.status)
   const activeCaseTopic = resolveSupportTopic(caseDetail)
@@ -1312,38 +1327,46 @@ const submitQuickAction = useCallback(
 
   return (
     <div className="page moderation-page">
-      <header className="moderation-page__header">
-        <div className="moderation-page__heading">
+      <header className="moderation-page__hero">
+        <div className="moderation-page__hero-copy">
+          <p className="moderation-page__eyebrow">Safety workspace</p>
           <h1>Moderation control center</h1>
           <p>
-            Monitor escalations, keep conversations organised, and fine-tune automated protections from a single, calmer
-            workspace.
+            Keep an eye on automated actions, triage open conversations, and respond
+            to members without leaving the dashboard.
           </p>
         </div>
-        <div className="moderation-page__status" aria-live="polite">
-          <div className="moderation-page__status-item">
-            <span className="moderation-page__status-label">Active cases</span>
-            <span className="moderation-page__status-value">
-              {caseInbox.loading ? '--' : caseSnapshot.active}
-            </span>
-          </div>
-          <div className="moderation-page__status-item">
-            <span className="moderation-page__status-label">Awaiting reply</span>
-            <span className="moderation-page__status-value">
-              {caseInbox.loading ? '--' : caseSnapshot.awaiting}
-            </span>
-          </div>
-          <div className="moderation-page__status-item">
-            <span className="moderation-page__status-label">Archived</span>
-            <span className="moderation-page__status-value">
-              {caseInbox.loading ? '--' : caseSnapshot.archived}
-            </span>
-          </div>
-          <div className="moderation-page__status-item">
-            <span className="moderation-page__status-label">Total cases</span>
-            <span className="moderation-page__status-value">
-              {caseInbox.loading ? '--' : caseSnapshot.total}
-            </span>
+        <div className="moderation-page__hero-meta">
+          <ul className="moderation-page__hero-metrics">
+            <li>
+              <span>Open cases</span>
+              <strong>{caseInbox.loading ? '--' : openCaseCount}</strong>
+            </li>
+            <li>
+              <span>Waiting on members</span>
+              <strong>{caseInbox.loading ? '--' : pendingResponseCount}</strong>
+            </li>
+            <li>
+              <span>Total logged</span>
+              <strong>{stats.loading ? '--' : stats.cases}</strong>
+            </li>
+          </ul>
+          <div className="moderation-page__hero-status">
+            <p>
+              {stats.error
+                ? stats.error
+                : stats.updatedAt
+                  ? `Last synced ${formatDateTime(stats.updatedAt)}`
+                  : 'Awaiting first sync'}
+            </p>
+            <button
+              type="button"
+              className="button button--ghost moderation-page__hero-refresh"
+              onClick={loadCases}
+              disabled={caseInbox.loading}
+            >
+              {caseInbox.loading ? 'Refreshing…' : 'Refresh cases'}
+            </button>
           </div>
         </div>
       </header>
@@ -1395,44 +1418,48 @@ const submitQuickAction = useCallback(
                 <p>Coordinate case conversations, triage actions, and close investigations.</p>
               </div>
               <div className="case-hub__toolbar panel__header-actions">
-                <span className="panel__meta">
-                  {caseInbox.loading ? 'Refreshing cases...' : caseCountSummary}
-                </span>
-                <label className="visually-hidden" htmlFor="case-filter">
-                  Filter cases
-                </label>
-                <select
-                  id="case-filter"
-                  className="case-hub__filter"
-                  value={caseFilter}
-                  onChange={(event) => setCaseFilter(event.target.value)}
-                  disabled={caseInbox.loading}
-                >
-                  {CASE_FILTER_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <label className="visually-hidden" htmlFor="case-category-filter">
-                  Filter by category
-                </label>
-                <select
-                  id="case-category-filter"
-                  className="case-hub__filter"
-                  value={caseCategoryFilter}
-                  onChange={(event) => setCaseCategoryFilter(event.target.value)}
-                  disabled={caseInbox.loading}
-                >
-                  {CASE_CATEGORY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                <div className="case-hub__toolbar-meta">
+                  <span className="panel__meta">
+                    {caseInbox.loading ? 'Refreshing cases...' : caseCountSummary}
+                  </span>
+                </div>
+                <div className="case-hub__filters" role="group" aria-label="Filter cases">
+                  <label className="visually-hidden" htmlFor="case-filter">
+                    Filter cases
+                  </label>
+                  <select
+                    id="case-filter"
+                    className="case-hub__filter"
+                    value={caseFilter}
+                    onChange={(event) => setCaseFilter(event.target.value)}
+                    disabled={caseInbox.loading}
+                  >
+                    {CASE_FILTER_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="visually-hidden" htmlFor="case-category-filter">
+                    Filter by category
+                  </label>
+                  <select
+                    id="case-category-filter"
+                    className="case-hub__filter"
+                    value={caseCategoryFilter}
+                    onChange={(event) => setCaseCategoryFilter(event.target.value)}
+                    disabled={caseInbox.loading}
+                  >
+                    {CASE_CATEGORY_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <button
                   type="button"
-                  className="button button--ghost"
+                  className="button button--ghost case-hub__refresh"
                   onClick={loadCases}
                   disabled={caseInbox.loading}
                 >
