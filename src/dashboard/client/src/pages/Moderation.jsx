@@ -128,47 +128,9 @@ export default function ModerationPage() {
       `${formatCaseFilterSummary(caseFilter, caseInbox.items.length)} • ${formatCaseCategorySummary(caseCategoryFilter)}`,
     [caseFilter, caseCategoryFilter, caseInbox.items.length]
   )
-  const openCaseCount = useMemo(
-    () =>
-      caseInbox.items.reduce(
-        (count, item) => (!isCaseTerminal(item.status) ? count + 1 : count),
-        0
-      ),
-    [caseInbox.items]
-  )
-  const pendingResponseCount = useMemo(
-    () =>
-      caseInbox.items.filter(
-        (item) => (item.status ?? '').toLowerCase() === 'pending-response'
-      ).length,
-    [caseInbox.items]
-  )
   const conversationLocked = isCaseTerminal(caseDetail.status)
   const archivedCase = isCaseArchived(caseDetail.status)
   const activeCaseTopic = resolveSupportTopic(caseDetail)
-  const caseSnapshot = useMemo(() => {
-    const snapshot = {
-      total: caseInbox.items.length,
-      active: 0,
-      awaiting: 0,
-      archived: 0
-    }
-
-    for (const entry of caseInbox.items) {
-      const status = getStatusValue(entry.status)
-      if (!isCaseTerminal(status)) {
-        snapshot.active += 1
-      }
-      if (status === 'pending-response') {
-        snapshot.awaiting += 1
-      }
-      if (isCaseArchived(status)) {
-        snapshot.archived += 1
-      }
-    }
-
-    return snapshot
-  }, [caseInbox.items])
   const [config, setConfig] = useState(null)
   const [keywordsInput, setKeywordsInput] = useState('')
   const [feedback, setFeedback] = useState('')
@@ -183,19 +145,6 @@ export default function ModerationPage() {
     alerts: true,
     templates: true
   }))
-  const headerSubtitle = selectedGuild
-    ? 'Monitor case triage, automation, and quick responses for your team.'
-    : 'Select a server to start coordinating moderation workflows.'
-  const guildLabel = selectedGuild?.name ?? 'No server selected'
-  const lastSyncedLabel = stats.updatedAt ? formatDateTime(stats.updatedAt) : 'Not synced yet'
-  const queueCountLabel = caseInbox.loading
-    ? 'Syncing…'
-    : `${caseInbox.items.length} ${caseInbox.items.length === 1 ? 'case' : 'cases'}`
-  const queueSummary = caseInbox.loading
-    ? 'Queue updating from your latest filters.'
-    : caseCountSummary
-  const lastSyncedDisplay = stats.loading ? 'Refreshing metrics…' : lastSyncedLabel
-  const totalModerationActions = stats.bans + stats.timeouts + stats.kicks + stats.warnings
 
   const togglePanel = useCallback((panel) => {
     setCollapsedPanels((previous) => ({
@@ -1203,63 +1152,99 @@ const submitQuickAction = useCallback(
   const support = config?.support ?? {}
 
   const handleToggleFilter = (key) => {
-    setConfig((prev) => ({
-      ...prev,
-      filters: {
-        ...prev.filters,
-        [key]: !prev.filters[key]
+    setConfig((prev) => {
+      if (!prev) {
+        return prev
       }
-    }))
+
+      const nextFilters = { ...(prev.filters ?? {}) }
+      nextFilters[key] = !nextFilters[key]
+
+      return {
+        ...prev,
+        filters: nextFilters
+      }
+    })
   }
 
   const handleSpamChange = (key, value) => {
-    setConfig((prev) => ({
-      ...prev,
-      spam: {
-        ...prev.spam,
-        [key]: value
+    setConfig((prev) => {
+      if (!prev) {
+        return prev
       }
-    }))
+
+      const nextSpam = { ...(prev.spam ?? {}) }
+      nextSpam[key] = value
+
+      return {
+        ...prev,
+        spam: nextSpam
+      }
+    })
   }
 
   const handleEscalationChange = (key, value) => {
-    setConfig((prev) => ({
-      ...prev,
-      escalation: {
-        ...prev.escalation,
-        [key]: value
+    setConfig((prev) => {
+      if (!prev) {
+        return prev
       }
-    }))
+
+      const nextEscalation = { ...(prev.escalation ?? {}) }
+      nextEscalation[key] = value
+
+      return {
+        ...prev,
+        escalation: nextEscalation
+      }
+    })
   }
 
   const handleAlertsChange = (key, value) => {
-    setConfig((prev) => ({
-      ...prev,
-      alerts: {
-        ...prev.alerts,
-        [key]: value
+    setConfig((prev) => {
+      if (!prev) {
+        return prev
       }
-    }))
+
+      const nextAlerts = { ...(prev.alerts ?? {}) }
+      nextAlerts[key] = value
+
+      return {
+        ...prev,
+        alerts: nextAlerts
+      }
+    })
   }
 
   const handleSupportChange = (key, value) => {
-    setConfig((prev) => ({
-      ...prev,
-      support: {
-        ...(prev.support ?? {}),
-        [key]: value
+    setConfig((prev) => {
+      if (!prev) {
+        return prev
       }
-    }))
+
+      const nextSupport = { ...(prev.support ?? {}) }
+      nextSupport[key] = value
+
+      return {
+        ...prev,
+        support: nextSupport
+      }
+    })
   }
 
   const handleTemplateChange = (key, value) => {
-    setConfig((prev) => ({
-      ...prev,
-      dmTemplates: {
-        ...prev.dmTemplates,
-        [key]: value
+    setConfig((prev) => {
+      if (!prev) {
+        return prev
       }
-    }))
+
+      const nextTemplates = { ...(prev.dmTemplates ?? {}) }
+      nextTemplates[key] = value
+
+      return {
+        ...prev,
+        dmTemplates: nextTemplates
+      }
+    })
   }
 
   const handleAddKeyword = () => {
@@ -1268,24 +1253,40 @@ const submitQuickAction = useCallback(
       return
     }
 
-    setConfig((prev) => ({
-      ...prev,
-      filters: {
-        ...prev.filters,
-        customKeywords: Array.from(new Set([...(prev.filters.customKeywords ?? []), trimmed]))
+    setConfig((prev) => {
+      if (!prev) {
+        return prev
       }
-    }))
+
+      const nextFilters = { ...(prev.filters ?? {}) }
+      const existingKeywords = Array.isArray(nextFilters.customKeywords)
+        ? nextFilters.customKeywords
+        : []
+      nextFilters.customKeywords = Array.from(new Set([...existingKeywords, trimmed]))
+
+      return {
+        ...prev,
+        filters: nextFilters
+      }
+    })
     setKeywordsInput('')
   }
 
   const handleRemoveKeyword = (keyword) => {
-    setConfig((prev) => ({
-      ...prev,
-      filters: {
-        ...prev.filters,
-        customKeywords: (prev.filters.customKeywords ?? []).filter((entry) => entry !== keyword)
+    setConfig((prev) => {
+      if (!prev) {
+        return prev
       }
-    }))
+
+      const nextFilters = { ...(prev.filters ?? {}) }
+      const keywords = Array.isArray(nextFilters.customKeywords) ? nextFilters.customKeywords : []
+      nextFilters.customKeywords = keywords.filter((entry) => entry !== keyword)
+
+      return {
+        ...prev,
+        filters: nextFilters
+      }
+    })
   }
 
   const handleSave = async () => {
@@ -1327,49 +1328,6 @@ const submitQuickAction = useCallback(
 
   return (
     <div className="page moderation-page">
-      <header className="moderation-page__hero">
-        <div className="moderation-page__hero-copy">
-          <p className="moderation-page__eyebrow">Safety workspace</p>
-          <h1>Moderation control center</h1>
-          <p>
-            Keep an eye on automated actions, triage open conversations, and respond
-            to members without leaving the dashboard.
-          </p>
-        </div>
-        <div className="moderation-page__hero-meta">
-          <ul className="moderation-page__hero-metrics">
-            <li>
-              <span>Open cases</span>
-              <strong>{caseInbox.loading ? '--' : openCaseCount}</strong>
-            </li>
-            <li>
-              <span>Waiting on members</span>
-              <strong>{caseInbox.loading ? '--' : pendingResponseCount}</strong>
-            </li>
-            <li>
-              <span>Total logged</span>
-              <strong>{stats.loading ? '--' : stats.cases}</strong>
-            </li>
-          </ul>
-          <div className="moderation-page__hero-status">
-            <p>
-              {stats.error
-                ? stats.error
-                : stats.updatedAt
-                  ? `Last synced ${formatDateTime(stats.updatedAt)}`
-                  : 'Awaiting first sync'}
-            </p>
-            <button
-              type="button"
-              className="button button--ghost moderation-page__hero-refresh"
-              onClick={loadCases}
-              disabled={caseInbox.loading}
-            >
-              {caseInbox.loading ? 'Refreshing…' : 'Refresh cases'}
-            </button>
-          </div>
-        </div>
-      </header>
       <div className="moderation-page__layout">
         <div className="moderation-page__column moderation-page__column--primary">
           <section className="panel panel--compact">
@@ -1379,31 +1337,37 @@ const submitQuickAction = useCallback(
                 <p>Monitor automated actions taken by the bot.</p>
               </div>
               <div className="panel__header-actions">
-                <p className="panel__meta">{statsMetaLabel}</p>
+                <p className="panel__meta">
+                  {stats.error
+                    ? stats.error
+                    : stats.updatedAt
+                      ? `Updated ${formatDateTime(stats.updatedAt)}`
+                      : 'Awaiting first update'}
+                </p>
               </div>
             </header>
             <div className="panel__body stat-grid">
-              <article className="stat-card stat-card--compact">
+              <article className="stat-card">
                 <p className="stat-card__label">Automated bans</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.bans}</p>
                 <span className="stat-card__helper">Triggered by escalation rules</span>
               </article>
-              <article className="stat-card stat-card--compact">
+              <article className="stat-card">
                 <p className="stat-card__label">Timeouts applied</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.timeouts}</p>
                 <span className="stat-card__helper">Includes spam auto-timeouts</span>
               </article>
-              <article className="stat-card stat-card--compact">
+              <article className="stat-card">
                 <p className="stat-card__label">Members kicked</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.kicks}</p>
                 <span className="stat-card__helper">Manual removals logged</span>
               </article>
-              <article className="stat-card stat-card--compact">
+              <article className="stat-card">
                 <p className="stat-card__label">Logged warnings</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.warnings}</p>
                 <span className="stat-card__helper">Totals since last reset</span>
               </article>
-              <article className="stat-card stat-card--compact">
+              <article className="stat-card">
                 <p className="stat-card__label">Cases on record</p>
                 <p className="stat-card__value">{stats.loading ? '--' : stats.cases}</p>
                 <span className="stat-card__helper">Stored in data/moderation/cases.json</span>
@@ -1418,48 +1382,44 @@ const submitQuickAction = useCallback(
                 <p>Coordinate case conversations, triage actions, and close investigations.</p>
               </div>
               <div className="case-hub__toolbar panel__header-actions">
-                <div className="case-hub__toolbar-meta">
-                  <span className="panel__meta">
-                    {caseInbox.loading ? 'Refreshing cases...' : caseCountSummary}
-                  </span>
-                </div>
-                <div className="case-hub__filters" role="group" aria-label="Filter cases">
-                  <label className="visually-hidden" htmlFor="case-filter">
-                    Filter cases
-                  </label>
-                  <select
-                    id="case-filter"
-                    className="case-hub__filter"
-                    value={caseFilter}
-                    onChange={(event) => setCaseFilter(event.target.value)}
-                    disabled={caseInbox.loading}
-                  >
-                    {CASE_FILTER_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  <label className="visually-hidden" htmlFor="case-category-filter">
-                    Filter by category
-                  </label>
-                  <select
-                    id="case-category-filter"
-                    className="case-hub__filter"
-                    value={caseCategoryFilter}
-                    onChange={(event) => setCaseCategoryFilter(event.target.value)}
-                    disabled={caseInbox.loading}
-                  >
-                    {CASE_CATEGORY_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <span className="panel__meta">
+                  {caseInbox.loading ? 'Refreshing cases...' : caseCountSummary}
+                </span>
+                <label className="visually-hidden" htmlFor="case-filter">
+                  Filter cases
+                </label>
+                <select
+                  id="case-filter"
+                  className="case-hub__filter"
+                  value={caseFilter}
+                  onChange={(event) => setCaseFilter(event.target.value)}
+                  disabled={caseInbox.loading}
+                >
+                  {CASE_FILTER_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <label className="visually-hidden" htmlFor="case-category-filter">
+                  Filter by category
+                </label>
+                <select
+                  id="case-category-filter"
+                  className="case-hub__filter"
+                  value={caseCategoryFilter}
+                  onChange={(event) => setCaseCategoryFilter(event.target.value)}
+                  disabled={caseInbox.loading}
+                >
+                  {CASE_CATEGORY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
                 <button
                   type="button"
-                  className="button button--ghost case-hub__refresh"
+                  className="button button--ghost"
                   onClick={loadCases}
                   disabled={caseInbox.loading}
                 >
