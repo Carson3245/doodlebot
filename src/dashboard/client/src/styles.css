@@ -502,6 +502,10 @@ body.auth-locked .app-shell {
     min-height: 0;
     height: auto;
   }
+
+  .case-hub__conversation-body {
+    min-height: 18rem;
+  }
 }
 
 @media (max-height: 820px) and (min-width: 1025px) {
@@ -1853,8 +1857,8 @@ code {
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.05);
   padding: 1.75rem;
-  min-height: clamp(34rem, calc(100vh - 240px), 64rem);
-  height: clamp(40rem, calc(100vh - 200px), 72rem);
+  min-height: clamp(40rem, calc(100vh - 220px), 70rem);
+  height: clamp(48rem, calc(100vh - 180px), 80rem);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1881,6 +1885,8 @@ code {
   height: 100%;
   gap: 1.35rem;
   min-width: 0;
+  flex: 1;
+  min-height: 0;
 }
 
 .case-hub__conversation-header {
@@ -2032,6 +2038,7 @@ code {
   border: 1px solid rgba(255, 255, 255, 0.06);
   scrollbar-gutter: stable both-edges;
   min-width: 0;
+  min-height: clamp(26rem, 55vh, 62rem);
 }
 
 .case-messages {
