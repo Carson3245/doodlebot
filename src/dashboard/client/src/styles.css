@@ -481,37 +481,38 @@ body.auth-locked .app-shell {
   overflow: hidden;
 }
 
-@media (max-width: 1024px) {
-  .panel--scrollable {
-    max-height: none;
-  }
+  @media (max-width: 1024px) {
+    .panel--scrollable {
+      max-height: none;
+    }
 
-  .panel--scrollable > .panel__body {
-    margin-right: 0;
-    padding-right: 0;
-  }
+    .panel--scrollable > .panel__body {
+      margin-right: 0;
+      padding-right: 0;
+    }
 
-  .case-hub__list {
-    max-height: none;
-    overflow: visible;
-    padding-right: 0;
-    margin-right: 0;
-  }
+    .case-hub__list {
+      max-height: none;
+      overflow: visible;
+      padding-right: 0;
+      margin-right: 0;
+    }
 
-  .case-hub__conversation {
-    min-height: 0;
-    height: auto;
-  }
+    .case-hub__conversation {
+      --case-pane-height: auto;
+      min-height: 0;
+      height: auto;
+    }
 
-  .case-hub__conversation-body {
-    min-height: 18rem;
+    .case-hub__conversation-body {
+      min-height: 18rem;
   }
 }
 
 @media (max-height: 820px) and (min-width: 1025px) {
   .case-hub__conversation {
-    min-height: clamp(28rem, calc(100vh - 200px), 52rem);
-    height: clamp(32rem, calc(100vh - 160px), 60rem);
+    --case-pane-height: min(48rem, calc(100vh - 160px));
+    min-height: clamp(18rem, 52vh, 32rem);
   }
 }
 
@@ -1853,12 +1854,14 @@ code {
 }
 
 .case-hub__conversation {
+  --case-pane-height: min(60rem, calc(100vh - 220px));
   background: rgba(17, 23, 42, 0.75);
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.05);
   padding: 1.75rem;
-  min-height: clamp(40rem, calc(100vh - 220px), 70rem);
-  height: clamp(48rem, calc(100vh - 180px), 80rem);
+  height: var(--case-pane-height);
+  max-height: var(--case-pane-height);
+  min-height: clamp(22rem, 48vh, 40rem);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1942,25 +1945,12 @@ code {
   border: 1px solid rgba(255, 255, 255, 0.12);
   color: var(--text-secondary);
   font-size: 0.82rem;
-}
-
-.case-participant--moderator {
-  background: rgba(79, 134, 247, 0.22);
-  border-color: rgba(79, 134, 247, 0.45);
-  color: #9bb9ff;
-}
-
-.case-participant--member {
-  background: rgba(99, 230, 190, 0.18);
-  border-color: rgba(99, 230, 190, 0.35);
-  color: #8cf2d3;
-}
-
-.case-participant--bot,
-.case-participant--system {
-  background: rgba(140, 102, 246, 0.2);
-  border-color: rgba(140, 102, 246, 0.4);
-  color: #cbb6ff;
+  color: var(--text-muted);
+  max-height: 8.5rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+  margin-right: -0.25rem;
+  scrollbar-gutter: stable both-edges;
 }
 
 .case-hub__conversation-tools {
@@ -2029,7 +2019,7 @@ code {
 }
 
 .case-hub__conversation-body {
-  flex: 1;
+  flex: 1 1 auto;
   background: rgba(9, 14, 27, 0.65);
   border-radius: 18px;
   padding: 1.5rem 1.6rem;
@@ -2038,7 +2028,7 @@ code {
   border: 1px solid rgba(255, 255, 255, 0.06);
   scrollbar-gutter: stable both-edges;
   min-width: 0;
-  min-height: clamp(26rem, 55vh, 62rem);
+  min-height: 0;
 }
 
 .case-messages {
@@ -2160,6 +2150,7 @@ code {
   font-family: inherit;
   font-size: 0.95rem;
   min-height: 120px;
+  resize: vertical;
 }
 
 .case-composer textarea:disabled {
@@ -2186,12 +2177,16 @@ code {
   }
 
   .case-hub__conversation {
-    min-height: auto;
+    --case-pane-height: auto;
     height: auto;
+    max-height: none;
+    min-height: 18rem;
   }
 
   .case-hub__conversation-body {
     padding: 1rem;
+    max-height: none;
+    min-height: 18rem;
   }
 
   .case-hub__list {
