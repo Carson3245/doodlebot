@@ -499,7 +499,15 @@ body.auth-locked .app-shell {
   }
 
   .case-hub__conversation {
+    min-height: 0;
     height: auto;
+  }
+}
+
+@media (max-height: 820px) and (min-width: 1025px) {
+  .case-hub__conversation {
+    min-height: clamp(28rem, calc(100vh - 200px), 52rem);
+    height: clamp(32rem, calc(100vh - 160px), 60rem);
   }
 }
 
@@ -1845,8 +1853,8 @@ code {
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.05);
   padding: 1.75rem;
-  min-height: 440px;
-  height: clamp(36rem, 78vh, 54rem);
+  min-height: clamp(34rem, calc(100vh - 240px), 64rem);
+  height: clamp(40rem, calc(100vh - 200px), 72rem);
   display: flex;
   flex-direction: column;
   overflow: hidden;
