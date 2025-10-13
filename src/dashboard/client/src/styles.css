@@ -117,7 +117,7 @@ a {
   display: flex;
   flex-direction: column;
   padding: 1.75rem 1.75rem 1.5rem;
-  gap: 2rem;
+  gap: 1.75rem;
   position: relative;
   z-index: 100;
   transition: transform 0.3s ease;
@@ -368,7 +368,7 @@ body.auth-locked .app-shell {
 
 .stat-grid {
   display: grid;
-  gap: clamp(1.1rem, 2vw, 1.6rem);
+  gap: 1.75rem;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
 }
 
@@ -376,11 +376,11 @@ body.auth-locked .app-shell {
   background: var(--card-bg);
   border: 1px solid var(--card-border);
   border-radius: 16px;
-  padding: 1.1rem 1.15rem 1.2rem;
+  padding: 1.5rem;
   box-shadow: var(--card-shadow);
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0.8rem;
   position: relative;
   overflow: hidden;
 }
@@ -445,7 +445,7 @@ body.auth-locked .app-shell {
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 1.75rem;
+  gap: 2rem;
 }
 
 .panel {
@@ -455,8 +455,8 @@ body.auth-locked .app-shell {
   box-shadow: var(--card-shadow);
   display: flex;
   flex-direction: column;
-  gap: 0.95rem;
-  padding: 1.35rem;
+  gap: 0.8rem;
+  padding: 1.5rem;
 }
 
 .panel--compact {
@@ -597,7 +597,7 @@ body.auth-locked .app-shell {
 .moderation-page__column {
   display: flex;
   flex-direction: column;
-  gap: 1.2rem;
+  gap: 0.8rem;
 }
 
 @media (min-width: 1200px) {
@@ -622,7 +622,7 @@ body.auth-locked .app-shell {
 .form-row {
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.8rem;
 }
 
 .moderation-page .form-row {
@@ -700,7 +700,7 @@ textarea {
 .form-actions {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 1.5rem;
   flex-wrap: wrap;
 }
 
@@ -801,18 +801,18 @@ textarea {
 }
 
 .guild-list {
-  gap: 1rem;
+  gap: 1.2rem;
 }
 
 .guild-list__item {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 1.2rem;
 }
 
 .guild-avatar {
-  width: 46px;
-  height: 46px;
+  width: 56px;
+  height: 56px;
   border-radius: 50%;
   background: rgba(79, 134, 247, 0.22);
   display: grid;
@@ -833,7 +833,7 @@ textarea {
 .guild-details {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.4rem;
 }
 
 .table {
@@ -980,7 +980,7 @@ textarea {
 .command-stats > div {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
+  gap: 0.4rem;
 }
 
 .stat-label {
@@ -1130,7 +1130,7 @@ textarea {
   color: var(--text-secondary);
   display: flex;
   flex-direction: column;
-  gap: 0.45rem;
+  gap: 0.8rem;
 }
 
 .page-intro {
@@ -1208,7 +1208,7 @@ code {
 .settings-content {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1.75rem;
 }
 
 .settings-section {
@@ -1498,7 +1498,7 @@ code {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1.75rem;
   z-index: 1;
 }
 
@@ -2016,7 +2016,7 @@ code {
   flex: 1;
   background: rgba(6, 10, 22, 0.78);
   border-radius: 18px;
-  padding: 1.1rem 1.25rem;
+  padding: 4.1rem 4.25rem;
   overflow-y: auto;
   border: 1px solid rgba(255, 255, 255, 0.04);
   scrollbar-gutter: stable both-edges;
