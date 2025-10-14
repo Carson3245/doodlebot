@@ -131,6 +131,9 @@ export default function ModerationPage() {
   const conversationLocked = isCaseTerminal(caseDetail.status)
   const archivedCase = isCaseArchived(caseDetail.status)
   const activeCaseTopic = resolveSupportTopic(caseDetail)
+  const showSummaryCard = Boolean(caseDetail.metadata?.reason || caseDetail.metadata?.supportContext)
+  const hasParticipants = Array.isArray(caseDetail.participants) && caseDetail.participants.length > 0
+  const showContextPanel = showSummaryCard || hasParticipants
   const [config, setConfig] = useState(null)
   const [keywordsInput, setKeywordsInput] = useState('')
   const [feedback, setFeedback] = useState('')
@@ -1538,35 +1541,37 @@ const submitQuickAction = useCallback(
                         )}
                       </div>
                     </header>
-                    {(caseDetail.metadata?.reason || caseDetail.metadata?.supportContext) && (
-                      <div className="case-hub__summary-card">
-                        {caseDetail.metadata?.reason && (
-                          <p>
-                            <strong>Member request:</strong> {caseDetail.metadata.reason}
-                          </p>
+                    {showContextPanel && (
+                      <div className="case-hub__context">
+                        {showSummaryCard && (
+                          <div className="case-hub__summary-card">
+                            {caseDetail.metadata?.reason && (
+                              <p>
+                                <strong>Member request:</strong> {caseDetail.metadata.reason}
+                              </p>
+                            )}
+                            {caseDetail.metadata?.supportContext && (
+                              <p className="case-hub__summary-meta">
+                                <strong>Requested via:</strong> {formatSupportOrigin(caseDetail.metadata.supportContext)}
+                              </p>
+                            )}
+                          </div>
                         )}
-                        {caseDetail.metadata?.supportContext && (
-                          <p className="case-hub__summary-meta">
-                            <strong>Requested via:</strong> {formatSupportOrigin(caseDetail.metadata.supportContext)}
-                          </p>
+                        {hasParticipants && (
+                          <div className="case-hub__participants">
+                            <ul>
+                              {caseDetail.participants.map((participant) => (
+                                <li key={participant.id}>
+                                  <span className={`case-participant case-participant--${participant.role}`}>
+                                    {participant.displayName || participant.tag || participant.id}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         )}
                       </div>
                     )}
-                    <div className="case-hub__participants">
-                      {caseDetail.participants.length > 0 ? (
-                        <ul>
-                          {caseDetail.participants.map((participant) => (
-                            <li key={participant.id}>
-                              <span className={`case-participant case-participant--${participant.role}`}>
-                                {participant.displayName || participant.tag || participant.id}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="placeholder">No participants recorded yet.</p>
-                      )}
-                    </div>
                     <div className="case-hub__conversation-body" ref={caseConversationRef}>
                       {caseDetail.loading ? (
                         <p className="placeholder">Loading conversation...</p>
@@ -1641,7 +1646,7 @@ const submitQuickAction = useCallback(
                           caseDetail.sending ||
                           conversationLocked
                         }
-                        rows={4}
+                        rows={2}
                       />
                       <div className="case-composer__footer">
                         {caseDetail.error && <p className="form-helper form-helper--error">{caseDetail.error}</p>}
