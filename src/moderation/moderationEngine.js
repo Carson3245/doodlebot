@@ -73,7 +73,7 @@ export class ModerationEngine {
       return { actionTaken: false }
     }
 
-    if (this.shouldBypassMember(message.member)) {
+    if (this.shouldBypassMember(message.member) || this.isWhitelisted(message)) {
       return { actionTaken: false }
     }
 
@@ -89,6 +89,25 @@ export class ModerationEngine {
     }
 
     return { actionTaken: false }
+  }
+
+  isWhitelisted(message) {
+    try {
+      const scopes = this.config.scopes ?? {}
+      const channelAllow = new Set(scopes.channelAllow ?? [])
+      const roleAllow = new Set(scopes.roleAllow ?? [])
+      const userAllow = new Set(scopes.userAllow ?? [])
+      if (!message) return false
+      if (userAllow.has(String(message.author?.id))) return true
+      if (channelAllow.has(String(message.channelId))) return true
+      const roles = message.member?.roles?.cache ? Array.from(message.member.roles.cache.keys()) : []
+      for (const r of roles) {
+        if (roleAllow.has(String(r))) return true
+      }
+      return false
+    } catch {
+      return false
+    }
   }
 
   async warn({ guildId, userId, moderatorId, moderatorTag, reason }) {
@@ -297,6 +316,13 @@ export class ModerationEngine {
 
     const reason = `Automod: ${violation.type}`
     try {
+      const evidence = {
+        content: message.content ?? '',
+        messageId: message.id ?? null,
+        channelId: message.channelId ?? null,
+        jumpUrl: message.url ?? null,
+        attachments: Array.from(message.attachments?.values?.() ?? [])
+      }
       await this.applyPenalty('warn', {
         guild,
         member,
@@ -304,7 +330,7 @@ export class ModerationEngine {
         userTag: member.user?.tag ?? null,
         reason: violation.message ?? reason,
         source: violation.type,
-        metadata: violation.metadata ?? {}
+        metadata: { ...(violation.metadata ?? {}), evidence }
       })
     } catch (error) {
       console.error('Failed to apply automod warning:', error)
@@ -313,47 +339,87 @@ export class ModerationEngine {
 
   async handleSpam(message) {
     const spamConfig = this.config.spam ?? {}
-    const limit = spamConfig.messagesPerMinute ?? 0
-    if (limit <= 0) {
+    const perMinute = spamConfig.messagesPerMinute ?? 0
+    const limits = spamConfig.limits ?? {}
+    const windowSec = Math.max(3, limits.windowSec ?? 10)
+    if (perMinute <= 0 && !limits.messages && !limits.mentions && !limits.links && !limits.emojis && !limits.attachments) {
       return null
     }
 
     const now = Date.now()
-    const bucket = this.spamBuckets.get(message.author.id) ?? []
-    bucket.push(now)
-    while (bucket.length && bucket[0] < now - 60_000) {
-      bucket.shift()
+    // legacy per-minute bucket
+    if (perMinute > 0) {
+      const minute = this.spamBuckets.get(`m:${message.author.id}`) ?? []
+      minute.push(now)
+      while (minute.length && minute[0] < now - 60_000) minute.shift()
+      this.spamBuckets.set(`m:${message.author.id}`, minute)
+      if (minute.length > perMinute) {
+        return await this.timeoutForSpam(message, `Automated timeout: ${minute.length} messages in 60 seconds`, { window: '60s', messages: minute.length })
+      }
     }
-    this.spamBuckets.set(message.author.id, bucket)
 
-    if (bucket.length > limit) {
-      this.spamBuckets.set(message.author.id, [])
-      const guild = message.guild
-      const member = message.member
-      if (!guild || !member) {
-        return { type: 'spam' }
-      }
+    const key = (t) => `${t}:${message.author.id}`
+    const step = (k) => {
+      const arr = this.spamBuckets.get(k) ?? []
+      arr.push(now)
+      while (arr.length && arr[0] < now - windowSec * 1000) arr.shift()
+      this.spamBuckets.set(k, arr)
+      return arr.length
+    }
 
-      const duration = spamConfig.autoTimeoutMinutes ?? 10
-      const reason = `Automated timeout: ${bucket.length} messages in 60 seconds`
-      try {
-        await this.applyPenalty('timeout', {
-          guild,
-          member,
-          userId: member.id,
-          userTag: member.user?.tag ?? null,
-          reason,
-          durationMinutes: duration,
-          source: 'spam-detector',
-          metadata: { messages: bucket.length }
-        })
-      } catch (error) {
-        console.error('Failed to apply spam timeout:', error)
-      }
-      return { type: 'spam', reason }
+    const msgCount = limits.messages ? step(key('s:msg')) : 0
+    const mentionCount = limits.mentions ? (message.mentions?.users?.size ?? 0) + (message.mentions?.roles?.size ?? 0) : 0
+    const mentionBucket = limits.mentions ? step(key(`s:men:${mentionCount}`)) : 0 // simple tick
+    const linkMatches = (String(message.content ?? '').match(/(https?:\/\/|www\.)\S+/gi) || []).length
+    const linkBucket = limits.links && linkMatches > 0 ? step(key(`s:lnk`)) + (linkMatches - 1) : 0
+    const emojiMatches = (String(message.content ?? '').match(/<a?:\w+:\d+>|[\u{1F300}-\u{1FAFF}]/gu) || []).length
+    const emojiBucket = limits.emojis && emojiMatches > 0 ? step(key('s:emo')) + Math.max(0, emojiMatches - 1) : 0
+    const attachCount = limits.attachments ? (message.attachments?.size ?? 0) : 0
+    const attachBucket = limits.attachments && attachCount > 0 ? step(key('s:att')) + Math.max(0, attachCount - 1) : 0
+
+    const violations = []
+    if (limits.messages && msgCount > limits.messages) violations.push('messages')
+    if (limits.mentions && mentionCount > limits.mentions) violations.push('mentions')
+    if (limits.links && linkMatches > limits.links) violations.push('links')
+    if (limits.emojis && emojiMatches > limits.emojis) violations.push('emojis')
+    if (limits.attachments && attachCount > limits.attachments) violations.push('attachments')
+
+    if (violations.length) {
+      const reason = `Automated timeout: ${violations.join(', ')} spike in ${windowSec}s`
+      return await this.timeoutForSpam(message, reason, {
+        window: `${windowSec}s`,
+        messages: msgCount,
+        mentions: mentionCount,
+        links: linkMatches,
+        emojis: emojiMatches,
+        attachments: attachCount
+      })
     }
 
     return null
+  }
+
+  async timeoutForSpam(message, reason, metrics) {
+    const spamConfig = this.config.spam ?? {}
+    const guild = message.guild
+    const member = message.member
+    if (!guild || !member) return { type: 'spam', reason }
+    const duration = spamConfig.autoTimeoutMinutes ?? 10
+    try {
+      await this.applyPenalty('timeout', {
+        guild,
+        member,
+        userId: member.id,
+        userTag: member.user?.tag ?? null,
+        reason,
+        durationMinutes: duration,
+        source: 'spam-detector',
+        metadata: { spam: metrics, evidence: { content: message.content ?? '', messageId: message.id ?? null, channelId: message.channelId ?? null, jumpUrl: message.url ?? null, attachments: Array.from(message.attachments?.values?.() ?? []) } }
+      })
+    } catch (error) {
+      console.error('Failed to apply spam timeout:', error)
+    }
+    return { type: 'spam', reason }
   }
 
   async applyPenalty(action, context) {

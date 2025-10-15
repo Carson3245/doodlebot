@@ -371,7 +371,11 @@ export async function appendCaseMessage({
   authorId,
   authorTag,
   body,
-  via
+  via,
+  messageId = null,
+  channelId = null,
+  jumpUrl = null,
+  attachments = []
 }) {
   if (!body || !body.trim()) {
     throw new Error('Message body cannot be empty')
@@ -393,7 +397,11 @@ export async function appendCaseMessage({
     authorId,
     authorTag,
     body,
-    via
+    via,
+    messageId,
+    channelId,
+    jumpUrl,
+    attachments
   })
   registerCaseMessage(data, caseEntry, message)
   if (authorType === 'member') {
@@ -717,7 +725,7 @@ function buildSystemMessage(entry) {
   return parts.join(' ')
 }
 
-function createMessage({ authorType, authorId, authorTag, body, via }) {
+function createMessage({ authorType, authorId, authorTag, body, via, messageId = null, channelId = null, jumpUrl = null, attachments = [] }) {
   const normalizedType = typeof authorType === 'string' ? authorType.toLowerCase() : 'system'
   const content = String(body ?? '').trim()
   const tag = typeof authorTag === 'string' && authorTag.trim().length ? authorTag.trim() : null
@@ -740,6 +748,19 @@ function createMessage({ authorType, authorId, authorTag, body, via }) {
     body: content,
     content,
     via: via ?? null,
+    messageId: messageId ? String(messageId) : null,
+    channelId: channelId ? String(channelId) : null,
+    jumpUrl: jumpUrl ?? null,
+    attachments: Array.isArray(attachments)
+      ? attachments
+          .map((a) => ({
+            url: a?.url ?? a?.proxyURL ?? a?.attachment ?? null,
+            name: a?.name ?? a?.filename ?? null,
+            size: typeof a?.size === 'number' ? a.size : null,
+            contentType: a?.contentType ?? a?.type ?? null
+          }))
+          .filter((x) => typeof x.url === 'string' && x.url.length)
+      : [],
     createdAt: new Date().toISOString()
   }
 }
@@ -1040,6 +1061,19 @@ function normalizeMessageRecord(raw = {}) {
     body,
     content,
     via: raw.via ?? null,
+    messageId: raw.messageId ? String(raw.messageId) : null,
+    channelId: raw.channelId ? String(raw.channelId) : null,
+    jumpUrl: raw.jumpUrl ?? null,
+    attachments: Array.isArray(raw.attachments)
+      ? raw.attachments
+          .map((a) => ({
+            url: a?.url ?? a?.proxyURL ?? a?.attachment ?? null,
+            name: a?.name ?? a?.filename ?? null,
+            size: typeof a?.size === 'number' ? a.size : null,
+            contentType: a?.contentType ?? a?.type ?? null
+          }))
+          .filter((x) => typeof x.url === 'string' && x.url.length)
+      : [],
     createdAt
   }
 }

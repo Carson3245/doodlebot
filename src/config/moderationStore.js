@@ -15,7 +15,28 @@ const defaultModeration = {
   spam: {
     messagesPerMinute: 8,
     autoTimeoutMinutes: 10,
-    escalationAfterWarnings: 3
+    escalationAfterWarnings: 3,
+    // Advanced multi-signal limits (window-based)
+    limits: {
+      windowSec: 10,
+      messages: 6,
+      mentions: 6,
+      links: 4,
+      emojis: 20,
+      attachments: 4
+    }
+  },
+  // Whitelists / scopes where automod is bypassed
+  scopes: {
+    channelAllow: [], // array of channel IDs
+    roleAllow: [],    // array of role IDs
+    userAllow: []     // array of user IDs
+  },
+  // Raid mode defaults (toggle can be wired later)
+  raidMode: {
+    enabled: false,
+    defaultSlowmodeSec: 10,
+    lockChannels: []
   },
   escalation: {
     warnThreshold: 2,
@@ -96,6 +117,8 @@ function mergeModeration(partial = {}) {
   return {
     filters: mergeFilters(partial.filters ?? {}),
     spam: mergeSpam(partial.spam ?? {}),
+    scopes: mergeScopes(partial.scopes ?? {}),
+    raidMode: mergeRaidMode(partial.raidMode ?? {}),
     escalation: mergeEscalation(partial.escalation ?? {}),
     alerts: mergeAlerts(partial.alerts ?? {}),
     support: mergeSupport(partial.support ?? {}),
@@ -124,7 +147,44 @@ function mergeSpam(spam) {
       1,
       10,
       defaultModeration.spam.escalationAfterWarnings
-    )
+    ),
+    limits: {
+      windowSec: clampNumber(spam?.limits?.windowSec, 3, 120, defaultModeration.spam.limits.windowSec),
+      messages: clampNumber(spam?.limits?.messages, 1, 120, defaultModeration.spam.limits.messages),
+      mentions: clampNumber(spam?.limits?.mentions, 1, 120, defaultModeration.spam.limits.mentions),
+      links: clampNumber(spam?.limits?.links, 1, 120, defaultModeration.spam.limits.links),
+      emojis: clampNumber(spam?.limits?.emojis, 1, 500, defaultModeration.spam.limits.emojis),
+      attachments: clampNumber(
+        spam?.limits?.attachments,
+        1,
+        50,
+        defaultModeration.spam.limits.attachments
+      )
+    }
+  };
+}
+
+function mergeScopes(scopes) {
+  const safeList = (v) => (Array.isArray(v) ? v.map((x) => String(x)).filter(Boolean) : []);
+  return {
+    channelAllow: safeList(scopes.channelAllow ?? defaultModeration.scopes.channelAllow),
+    roleAllow: safeList(scopes.roleAllow ?? defaultModeration.scopes.roleAllow),
+    userAllow: safeList(scopes.userAllow ?? defaultModeration.scopes.userAllow)
+  };
+}
+
+function mergeRaidMode(raid) {
+  return {
+    enabled: raid.enabled !== undefined ? Boolean(raid.enabled) : defaultModeration.raidMode.enabled,
+    defaultSlowmodeSec: clampNumber(
+      raid.defaultSlowmodeSec,
+      0,
+      21_600,
+      defaultModeration.raidMode.defaultSlowmodeSec
+    ),
+    lockChannels: Array.isArray(raid.lockChannels)
+      ? raid.lockChannels.map((id) => String(id)).filter(Boolean)
+      : defaultModeration.raidMode.lockChannels
   };
 }
 

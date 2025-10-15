@@ -1,9 +1,11 @@
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/Layout.jsx'
-import DashboardPage from './pages/Dashboard.jsx'
+import OverviewPage from './pages/Overview.jsx'
+import PeoplePage from './pages/People.jsx'
+import CasesPage from './pages/Cases.jsx'
+import InsightsPage from './pages/Insights.jsx'
 import SettingsPage from './pages/Settings.jsx'
 import CommandsPage from './pages/Commands.jsx'
-import LogsPage from './pages/Logs.jsx'
 import ModerationPage from './pages/Moderation.jsx'
 import GuildSelectionPage from './pages/GuildSelection.jsx'
 import LoginPage from './pages/Login.jsx'
@@ -40,11 +42,13 @@ function App() {
         <Route path="/guilds" element={<GuildSelectionPage />} />
         <Route element={<GuildGuard />}>
           <Route element={<AppLayout />}>
-            <Route index element={<DashboardPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route index element={<OverviewPage />} />
+            <Route path="/people" element={<PeoplePage />} />
+            <Route path="/cases" element={<CasesPage />} />
             <Route path="/commands" element={<CommandsPage />} />
             <Route path="/moderation" element={<ModerationPage />} />
-            <Route path="/logs" element={<LogsPage />} />
+            <Route path="/insights" element={<InsightsPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Route>
         </Route>
       </Route>

@@ -123,6 +123,7 @@ export default function ModerationPage() {
   const [caseMenuOpen, setCaseMenuOpen] = useState(false)
   const [caseFilter, setCaseFilter] = useState('active')
   const [caseCategoryFilter, setCaseCategoryFilter] = useState('all')
+  const [caseSearch, setCaseSearch] = useState('')
   const caseCountSummary = useMemo(
     () =>
       `${formatCaseFilterSummary(caseFilter, caseInbox.items.length)} • ${formatCaseCategorySummary(caseCategoryFilter)}`,
@@ -138,6 +139,19 @@ export default function ModerationPage() {
   const [keywordsInput, setKeywordsInput] = useState('')
   const [feedback, setFeedback] = useState('')
   const [loading, setLoading] = useState(true)
+  const [contextCollapsed, setContextCollapsed] = useState(false)
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.matchMedia) {
+        const mql = window.matchMedia('(max-width: 1100px)')
+        const handle = () => setContextCollapsed(Boolean(mql.matches))
+        handle()
+        mql.addEventListener?.('change', handle)
+        return () => mql.removeEventListener?.('change', handle)
+      }
+    } catch {}
+  }, [])
   const [saving, setSaving] = useState(false)
   const [quickActions, setQuickActions] = useState(() => createQuickActionState())
   const [collapsedPanels, setCollapsedPanels] = useState(() => ({
@@ -1388,6 +1402,15 @@ const submitQuickAction = useCallback(
                 <span className="panel__meta">
                   {caseInbox.loading ? 'Refreshing cases...' : caseCountSummary}
                 </span>
+                <input
+                  type="search"
+                  className="case-hub__search"
+                  placeholder="Search cases..."
+                  value={caseSearch}
+                  onChange={(e) => setCaseSearch(e.target.value)}
+                  disabled={caseInbox.loading}
+                  aria-label="Search cases"
+                />
                 <label className="visually-hidden" htmlFor="case-filter">
                   Filter cases
                 </label>
@@ -1440,7 +1463,19 @@ const submitQuickAction = useCallback(
                   <p className="placeholder">{formatEmptyCaseMessage(caseFilter, caseCategoryFilter)}</p>
                 ) : (
                   <ul className="case-hub__items">
-                    {caseInbox.items.map((item) => {
+                    {caseInbox.items
+                      .filter((item) => {
+                        const q = caseSearch.trim().toLowerCase()
+                        if (!q) return true
+                        const subject = String(item.subject || item.reason || '').toLowerCase()
+                        const who = String(
+                          item.memberTag || item.userTag || item.memberName || item.userName || item.userId || ''
+                        ).toLowerCase()
+                        const id = String(item.id || '').toLowerCase()
+                        const topic = String(resolveSupportTopic(item) || '').toLowerCase()
+                        return subject.includes(q) || who.includes(q) || id.includes(q) || topic.includes(q)
+                      })
+                      .map((item) => {
                       const isActive = item.id === caseInbox.selectedCaseId
                       const participant =
                         item.memberTag || item.userTag || item.memberName || item.userName || item.userId
@@ -1509,6 +1544,17 @@ const submitQuickAction = useCallback(
                         </div>
                       </div>
                       <div className="case-hub__conversation-tools" ref={caseMenuRef}>
+                        {showContextPanel && (
+                          <button
+                            type="button"
+                            className="button button--ghost"
+                            onClick={() => setContextCollapsed((v) => !v)}
+                            aria-pressed={!contextCollapsed}
+                            aria-label={contextCollapsed ? 'Show details' : 'Hide details'}
+                          >
+                            {contextCollapsed ? 'Show details' : 'Hide details'}
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="case-hub__menu-trigger"
@@ -1541,7 +1587,7 @@ const submitQuickAction = useCallback(
                         )}
                       </div>
                     </header>
-                    {showContextPanel && (
+                    {showContextPanel && !contextCollapsed && (
                       <div className="case-hub__context">
                         {showSummaryCard && (
                           <div className="case-hub__summary-card">
@@ -1619,8 +1665,24 @@ const submitQuickAction = useCallback(
                                       {formatDateTime(message.createdAt)}
                                     </time>
                                   )}
+                                  {message.jumpUrl && (
+                                    <a className="case-message__jump" href={message.jumpUrl} target="_blank" rel="noreferrer">
+                                      Open in Discord
+                                    </a>
+                                  )}
                                 </div>
                                 {content && <p className="case-message__content">{content}</p>}
+                                {Array.isArray(message.attachments) && message.attachments.length > 0 && (
+                                  <ul className="case-message__attachments">
+                                    {message.attachments.map((att, idx) => (
+                                      <li key={att.url || idx}>
+                                        <a href={att.url} target="_blank" rel="noreferrer" className="attachment-chip">
+                                          {att.name || 'attachment'}
+                                        </a>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
                               </li>
                             )
                           })}
