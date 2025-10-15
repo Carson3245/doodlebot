@@ -4,6 +4,7 @@ import { createClient } from './bot/client.js';
 import { loadCommands } from './bot/loadCommands.js';
 import { registerCommands } from './bot/registerCommands.js';
 import { createDashboard } from './dashboard/server.js';
+import { startCheckinScheduler } from './people/checkinScheduler.js';
 import { createChatReply } from './chat/responder.js';
 import { recordInteraction } from './brain/brainStore.js';
 import { getStyleSync, loadStyle } from './config/styleStore.js';
@@ -313,6 +314,45 @@ async function bootstrap() {
   const app = createDashboard(client, moderation);
   app.listen(dashboardPort, () => {
     console.log(`Dashboard available at http://localhost:${dashboardPort}`);
+  });
+
+  const scheduler = startCheckinScheduler({
+    intervalMs: 60 * 60 * 1000,
+    withinHours: 24,
+    includeMissed: true,
+    onDueCheckins: (entries) => {
+      if (!entries?.length) {
+        return;
+      }
+      const preview = entries
+        .slice(0, 3)
+        .map(({ person, checkin }) => `${person.displayName} (${checkin.cadence})`)
+        .join(', ');
+      console.log(
+        `[checkins] ${entries.length} follow-up${entries.length === 1 ? '' : 's'} due within 24h${
+          preview ? ` → ${preview}${entries.length > 3 ? '…' : ''}` : ''
+        }`
+      );
+    },
+    logger: console
+  });
+
+  const stopScheduler = () => {
+    try {
+      scheduler?.stop?.();
+    } catch (error) {
+      console.warn('Failed to stop check-in scheduler gracefully:', error);
+    }
+  };
+
+  process.once('exit', stopScheduler);
+  process.once('SIGINT', () => {
+    stopScheduler();
+    process.exit();
+  });
+  process.once('SIGTERM', () => {
+    stopScheduler();
+    process.exit();
   });
 
   await client.login(token);

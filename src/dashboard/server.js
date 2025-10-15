@@ -11,6 +11,28 @@ import { getBrainSummary } from '../brain/brainStore.js';
 import { loadCommandConfig, saveCommandConfig } from '../config/commandStore.js';
 import { loadModerationConfig, saveModerationConfig } from '../config/moderationStore.js';
 import { onModerationStoreEvent } from '../moderation/caseStore.js';
+import { requirePermission, Permissions } from '../auth/rbac.js';
+import {
+  listPeople,
+  createPerson,
+  updatePerson,
+  upsertPeople,
+  markPersonAnnounced,
+  markPersonRolesSynced,
+  offboardPerson,
+  listCheckinsForPerson,
+  recordCheckin,
+  getPeopleSummary
+} from '../people/peopleStore.js';
+import { getUserAccessSummary } from './rbacStore.js';
+import { getDueCheckins } from '../people/checkinScheduler.js';
+import { listAuditEntries, getAuditStats } from '../audit/auditLog.js';
+import {
+  getEngagementSnapshot,
+  getFlowSeries,
+  getHeadcountSeries,
+  getOverviewKpis
+} from './metricsStore.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const legacyPublicDir = path.join(__dirname, 'public');
@@ -86,7 +108,7 @@ export function createDashboard(client, moderation) {
   );
   app.use(morgan('dev'));
 
-  app.get('/auth/status', (req, res) => {
+  app.get('/auth/status', async (req, res) => {
     const user = req.session?.user;
     if (!user) {
       res.json({ authenticated: false, oauthEnabled });
@@ -98,18 +120,40 @@ export function createDashboard(client, moderation) {
         ? `${user.username}#${user.discriminator}`
         : user.username);
 
-    res.json({
-      authenticated: true,
-      oauthEnabled,
-      user: {
-        id: user.id,
-        username: user.username,
-        discriminator: user.discriminator,
-        globalName: user.globalName,
-        avatar: user.avatar,
-        displayName
-      }
-    });
+    try {
+      const access = await getUserAccessSummary(user.id);
+      req.session.dashboardRoles = access.roles;
+      res.json({
+        authenticated: true,
+        oauthEnabled,
+        user: {
+          id: user.id,
+          username: user.username,
+          discriminator: user.discriminator,
+          globalName: user.globalName,
+          avatar: user.avatar,
+          displayName,
+          roles: access.roles,
+          permissions: Array.from(access.permissions ?? [])
+        }
+      });
+    } catch (error) {
+      console.error('Failed to resolve dashboard access for user:', error);
+      res.json({
+        authenticated: true,
+        oauthEnabled,
+        user: {
+          id: user.id,
+          username: user.username,
+          discriminator: user.discriminator,
+          globalName: user.globalName,
+          avatar: user.avatar,
+          displayName,
+          roles: [],
+          permissions: []
+        }
+      });
+    }
   });
 
   app.get('/auth/login', (req, res) => {
@@ -240,7 +284,297 @@ export function createDashboard(client, moderation) {
     res.status(401).json({ error: 'Unauthorized' });
   };
 
+  const attachRbac = async (req, _res, next) => {
+    const user = req.session?.user;
+    if (!user) {
+      req.rbac = { userId: null, roles: [], permissions: new Set() };
+      next();
+      return;
+    }
+
+    try {
+      const access = await getUserAccessSummary(user.id);
+      req.rbac = {
+        userId: user.id,
+        roles: access.roles ?? [],
+        permissions:
+          access.permissions instanceof Set
+            ? access.permissions
+            : new Set(access.permissions ?? [])
+      };
+      req.session.dashboardRoles = access.roles ?? [];
+    } catch (error) {
+      console.error('Failed to load RBAC context for dashboard request:', error);
+      req.rbac = { userId: user.id, roles: [], permissions: new Set() };
+    }
+    next();
+  };
+
   const api = express.Router();
+
+  api.get('/metrics/kpis', async (req, res) => {
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      const period = typeof req.query.period === 'string' ? req.query.period : '30d';
+      const date = parseMetricsDate(req.query.date);
+
+      let memberCount = null;
+      if (guildId) {
+        const guild = await resolveGuild(client, guildId);
+        memberCount = guild?.memberCount ?? null;
+      }
+
+      const payload = await getOverviewKpis({
+        guildId,
+        period,
+        date,
+        memberCount,
+        moderation,
+        clientReady: client.isReady()
+      });
+      res.json(payload);
+    } catch (error) {
+      console.error('Failed to load overview KPIs:', error);
+      res.status(500).json({ error: 'Failed to load overview metrics.' });
+    }
+  });
+
+  api.get('/metrics/headcount', async (req, res) => {
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      const period = typeof req.query.period === 'string' ? req.query.period : '30d';
+      const date = parseMetricsDate(req.query.date);
+
+      let memberCount = null;
+      if (guildId) {
+        const guild = await resolveGuild(client, guildId);
+        memberCount = guild?.memberCount ?? null;
+      }
+
+      const payload = await getHeadcountSeries({ guildId, period, date, memberCount });
+      res.json(payload);
+    } catch (error) {
+      console.error('Failed to load headcount metrics:', error);
+      res.status(500).json({ error: 'Failed to load headcount metrics.' });
+    }
+  });
+
+  api.get('/metrics/flow', async (req, res) => {
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      const period = typeof req.query.period === 'string' ? req.query.period : '30d';
+      const date = parseMetricsDate(req.query.date);
+      const payload = await getFlowSeries({ guildId, period, date });
+      res.json(payload);
+    } catch (error) {
+      console.error('Failed to load flow metrics:', error);
+      res.status(500).json({ error: 'Failed to load entries and exits metrics.' });
+    }
+  });
+
+  api.get('/metrics/engagement', async (req, res) => {
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      const period = typeof req.query.period === 'string' ? req.query.period : '30d';
+      const payload = await getEngagementSnapshot({ guildId, period });
+      res.json(payload);
+    } catch (error) {
+      console.error('Failed to load engagement metrics:', error);
+      res.status(500).json({ error: 'Failed to load engagement metrics.' });
+    }
+  });
+
+  api.get('/people/summary', requirePermission(Permissions.VIEW_PEOPLE), async (_req, res) => {
+    try {
+      const summary = await getPeopleSummary();
+      res.json(summary);
+    } catch (error) {
+      console.error('Failed to load people summary:', error);
+      res.status(500).json({ error: 'Failed to load people summary.' });
+    }
+  });
+
+  api.get('/people', requirePermission(Permissions.VIEW_PEOPLE), async (req, res) => {
+    try {
+      const result = await listPeople({
+        guildId: sanitizeSnowflake(req.query.guildId),
+        status: req.query.status,
+        search: req.query.search,
+        department: req.query.department,
+        tag: req.query.tag,
+        limit: req.query.limit,
+        offset: req.query.offset,
+        sortBy: req.query.sortBy,
+        direction: req.query.direction
+      });
+      res.json(result);
+    } catch (error) {
+      console.error('Failed to list people:', error);
+      res.status(500).json({ error: 'Failed to load roster.' });
+    }
+  });
+
+  api.post('/people', requirePermission(Permissions.MANAGE_PEOPLE), async (req, res) => {
+    try {
+      const created = await createPerson(req.body ?? {}, buildAuditContext(req));
+      res.status(201).json(created);
+    } catch (error) {
+      console.error('Failed to create person:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to create person.' });
+    }
+  });
+
+  api.put('/people/:personId', requirePermission(Permissions.MANAGE_PEOPLE), async (req, res) => {
+    try {
+      const updated = await updatePerson(req.params.personId, req.body ?? {}, buildAuditContext(req));
+      res.json(updated);
+    } catch (error) {
+      console.error('Failed to update person:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to update person.' });
+    }
+  });
+
+  api.post('/people/import', requirePermission(Permissions.IMPORT_PEOPLE), async (req, res) => {
+    try {
+      const records = Array.isArray(req.body) ? req.body : Array.isArray(req.body?.records) ? req.body.records : [];
+      const result = await upsertPeople(records, buildAuditContext(req));
+      res.json(result);
+    } catch (error) {
+      console.error('Failed to import people:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to import people.' });
+    }
+  });
+
+  api.post(
+    '/people/:personId/actions/announce',
+    requirePermission(Permissions.ANNOUNCE_PEOPLE),
+    async (req, res) => {
+      try {
+        const updated = await markPersonAnnounced(req.params.personId, buildAuditContext(req));
+        res.json(updated);
+      } catch (error) {
+        console.error('Failed to mark announcement:', error);
+        res.status(500).json({ error: error?.message ?? 'Failed to mark announcement.' });
+      }
+    }
+  );
+
+  api.post(
+    '/people/:personId/actions/rolesync',
+    requirePermission(Permissions.ROLESYNC),
+    async (req, res) => {
+      try {
+        const updated = await markPersonRolesSynced(req.params.personId, buildAuditContext(req));
+        res.json(updated);
+      } catch (error) {
+        console.error('Failed to sync roles for person:', error);
+        res.status(500).json({ error: error?.message ?? 'Failed to sync roles.' });
+      }
+    }
+  );
+
+  api.post(
+    '/people/:personId/actions/offboard',
+    requirePermission(Permissions.OFFBOARD),
+    async (req, res) => {
+      try {
+        const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : null;
+        const updated = await offboardPerson(req.params.personId, { reason }, buildAuditContext(req));
+        res.json(updated);
+      } catch (error) {
+        console.error('Failed to offboard person:', error);
+        res.status(500).json({ error: error?.message ?? 'Failed to offboard person.' });
+      }
+    }
+  );
+
+  api.get(
+    '/people/:personId/checkins',
+    requirePermission(Permissions.VIEW_CHECKINS),
+    async (req, res) => {
+      try {
+        const checkins = await listCheckinsForPerson(req.params.personId);
+        res.json({ checkins });
+      } catch (error) {
+        console.error('Failed to list check-ins:', error);
+        res.status(500).json({ error: error?.message ?? 'Failed to load check-ins.' });
+      }
+    }
+  );
+
+  api.post(
+    '/people/:personId/checkins/:cadence',
+    requirePermission(Permissions.UPDATE_CHECKINS),
+    async (req, res) => {
+      try {
+        const payload = {
+          status: req.body?.status,
+          notes: req.body?.notes,
+          assignedTo: sanitizeSnowflake(req.body?.assignedTo),
+          assignedToTag: req.body?.assignedToTag,
+          completedAt: req.body?.completedAt
+        };
+        const updated = await recordCheckin(req.params.personId, req.params.cadence, {
+          ...payload,
+          actorId: req.session?.user?.id ?? null,
+          actorTag: buildUserTag(req.session?.user ?? null)
+        });
+        res.json({ checkins: updated.checkins, person: updated });
+      } catch (error) {
+        console.error('Failed to update check-in:', error);
+        res.status(500).json({ error: error?.message ?? 'Failed to update check-in.' });
+      }
+    }
+  );
+
+  api.get('/people/checkins/due', requirePermission(Permissions.VIEW_CHECKINS), async (req, res) => {
+    try {
+      const withinHours = req.query.withinHours ? Number(req.query.withinHours) : 24;
+      const includeMissed = String(req.query.includeMissed ?? '').toLowerCase() === 'true';
+      const due = await getDueCheckins({ withinHours, includeMissed });
+      const results = due.map(({ person, checkin }) => ({
+        personId: person.id,
+        displayName: person.displayName,
+        department: person.department,
+        cadence: checkin.cadence,
+        status: checkin.status,
+        dueAt: checkin.dueAt,
+        assignedTo: checkin.assignedTo ?? null,
+        assignedToTag: checkin.assignedToTag ?? null
+      }));
+      res.json({ results });
+    } catch (error) {
+      console.error('Failed to load due check-ins:', error);
+      res.status(500).json({ error: 'Failed to load due check-ins.' });
+    }
+  });
+
+  api.get('/audit/log', requirePermission(Permissions.VIEW_AUDIT), async (req, res) => {
+    try {
+      const payload = await listAuditEntries({
+        limit: req.query.limit,
+        offset: req.query.offset,
+        actorId: req.query.actorId,
+        targetId: req.query.targetId,
+        guildId: req.query.guildId,
+        action: req.query.action
+      });
+      res.json(payload);
+    } catch (error) {
+      console.error('Failed to load audit log:', error);
+      res.status(500).json({ error: 'Failed to load audit log.' });
+    }
+  });
+
+  api.get('/audit/stats', requirePermission(Permissions.VIEW_AUDIT), async (_req, res) => {
+    try {
+      const stats = await getAuditStats();
+      res.json(stats);
+    } catch (error) {
+      console.error('Failed to load audit stats:', error);
+      res.status(500).json({ error: 'Failed to load audit stats.' });
+    }
+  });
 
   api.get('/status', (_req, res) => {
     const isReady = client.isReady();
@@ -888,7 +1222,7 @@ export function createDashboard(client, moderation) {
     }
   });
 
-  app.use('/api', requireAuth, api);
+  app.use('/api', requireAuth, attachRbac, api);
 
   if (fs.existsSync(clientDistDir)) {
     app.use(express.static(clientDistDir));
@@ -903,6 +1237,26 @@ export function createDashboard(client, moderation) {
   }
 
   return app;
+}
+
+function parseMetricsDate(value) {
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+  }
+  return new Date();
+}
+
+function buildAuditContext(req) {
+  const user = req.session?.user ?? null;
+  const roles = req.rbac?.roles ?? [];
+  return {
+    actorId: user?.id ?? null,
+    actorTag: user ? buildUserTag(user) : null,
+    actorRoles: roles
+  };
 }
 
 function sanitizeSnowflake(input) {
