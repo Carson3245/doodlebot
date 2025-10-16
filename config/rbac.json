@@ -1,0 +1,7 @@
+{
+  "Admin": ["*"],
+  "Manager": ["alerts:ack", "alerts:silence", "cases:*", "people:*", "metrics:read"],
+  "Mod": ["cases:mod", "commands:update", "metrics:read"],
+  "HR": ["people:*", "cases:rh", "metrics:read"],
+  "Viewer": ["metrics:read"]
+}
