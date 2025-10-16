@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../authContext.js'
 import { useGuild } from '../guildContext.js'
 
@@ -73,6 +73,33 @@ export default function PeoplePage() {
   const refreshRoster = useCallback(() => {
     setReloadKey((value) => value + 1)
   }, [])
+
+  const handleExport = useCallback(
+    (format) => {
+      const params = new URLSearchParams({ format })
+      if (selectedGuild?.id) {
+        params.set('guildId', selectedGuild.id)
+      }
+      if (filters.status && filters.status !== 'all') {
+        params.set('status', filters.status)
+      }
+      if (filters.department && filters.department !== 'all') {
+        params.set('department', filters.department)
+      }
+      if (filters.search) {
+        params.set('search', filters.search)
+      }
+      const url = `/api/people/export?${params.toString()}`
+      try {
+        window.open(url, '_blank', 'noopener')
+        setMessage({ type: 'success', text: 'Export started in a new tab.' })
+      } catch (error) {
+        console.error('Failed to export people', error)
+        setMessage({ type: 'error', text: 'Unable to start export.' })
+      }
+    },
+    [filters.department, filters.search, filters.status, selectedGuild]
+  )
 
   useEffect(() => {
     const controller = new AbortController()
@@ -264,11 +291,22 @@ export default function PeoplePage() {
 
       if (person.guildId) {
         setDrawerCases({ loading: true, data: [], error: null })
-        fetch(`/api/moderation/cases?guildId=${person.guildId}&status=open&limit=6`)
+        const params = new URLSearchParams({
+          guildId: person.guildId,
+          status: 'active',
+          limit: '6',
+          includeArchived: 'false'
+        })
+        fetch(`/api/cases?${params.toString()}`)
           .then(async (response) => {
             if (!response.ok) throw new Error(`Status ${response.status}`)
-            const data = await response.json()
-            setDrawerCases({ loading: false, data: Array.isArray(data) ? data : [], error: null })
+            const payload = await response.json()
+            const items = Array.isArray(payload?.items)
+              ? payload.items
+              : Array.isArray(payload)
+                ? payload
+                : []
+            setDrawerCases({ loading: false, data: items, error: null })
           })
           .catch((error) => {
             console.error('Failed to load case history', error)
@@ -350,12 +388,18 @@ export default function PeoplePage() {
               Onboarding checklist
             </button>
           )}
+          <button type="button" className="button button--ghost" onClick={() => handleExport('csv')}>
+            Export CSV
+          </button>
+          <button type="button" className="button button--ghost" onClick={() => handleExport('pdf')}>
+            Export PDF
+          </button>
         </div>
       </header>
 
       <section className="panel people-summary" aria-live="polite">
         {summary.loading ? (
-          <p>Calculating roster snapshot…</p>
+          <p>Calculating roster snapshotâ€¦</p>
         ) : summary.error ? (
           <p className="text-danger">{summary.error}</p>
         ) : summary.data ? (
@@ -381,7 +425,7 @@ export default function PeoplePage() {
 
       <section className="panel roster-panel" aria-live="polite">
         {roster.loading ? (
-          <div className="table-placeholder">Loading roster…</div>
+          <div className="table-placeholder">Loading rosterâ€¦</div>
         ) : roster.error ? (
           <div className="table-placeholder table-placeholder--error">
             <p>{roster.error}</p>
@@ -419,7 +463,7 @@ export default function PeoplePage() {
                       {person.title && <span className="people-table__sub">{person.title}</span>}
                     </button>
                   </td>
-                  <td>{person.department ?? '—'}</td>
+                  <td>{person.department ?? 'â€”'}</td>
                   <td>
                     <StatusBadge status={person.status} />
                   </td>
@@ -467,7 +511,7 @@ export default function PeoplePage() {
             <p>7/30/90 day follow-ups due soon.</p>
           </div>
           {dueCheckins.loading ? (
-            <p>Checking upcoming touchpoints…</p>
+            <p>Checking upcoming touchpointsâ€¦</p>
           ) : dueCheckins.error ? (
             <p className="text-danger">{dueCheckins.error}</p>
           ) : dueCheckins.data.length === 0 ? (
@@ -567,7 +611,7 @@ function PeopleToolbar({ filters, onChange }) {
         <input
           id="people-search"
           type="search"
-          placeholder="Search people…"
+          placeholder="Search peopleâ€¦"
           value={filters.search}
           onChange={(event) => onChange({ ...filters, search: event.target.value })}
         />
@@ -619,21 +663,21 @@ function StatusBadge({ status }) {
 
 function formatCheckin(entry) {
   if (!entry?.dueAt) {
-    return '—'
+    return 'â€”'
   }
   return `${CHECKIN_LABELS[entry.cadence] ?? entry.cadence}: ${formatDue(entry.dueAt)}`
 }
 
 function formatCompleted(entry) {
   if (!entry?.completedAt) {
-    return '—'
+    return 'â€”'
   }
   return `${CHECKIN_LABELS[entry.cadence] ?? entry.cadence}: ${formatDate(entry.completedAt)}`
 }
 
 function formatDate(value) {
   if (!value) {
-    return '—'
+    return 'â€”'
   }
   try {
     return DATE_FORMATTER.format(new Date(value))
@@ -644,7 +688,7 @@ function formatDate(value) {
 
 function formatDue(value) {
   if (!value) {
-    return '—'
+    return 'â€”'
   }
   try {
     const date = new Date(value)
@@ -681,19 +725,19 @@ function ProfileDrawer({ person, checkins, cases, onClose, onRecordCheckin, canU
         <h3>Details</h3>
         <dl className="profile-drawer__list">
           <DetailRow label="Status" value={<StatusBadge status={person.status} />} />
-          <DetailRow label="Location" value={person.location ?? '—'} />
-          <DetailRow label="Timezone" value={person.timezone ?? '—'} />
-          <DetailRow label="Email" value={person.email ?? '—'} />
+          <DetailRow label="Location" value={person.location ?? 'â€”'} />
+          <DetailRow label="Timezone" value={person.timezone ?? 'â€”'} />
+          <DetailRow label="Email" value={person.email ?? 'â€”'} />
           <DetailRow label="Joined" value={formatDate(person.joinedAt)} />
           <DetailRow label="Last seen" value={formatDate(person.lastSeenAt)} />
-          <DetailRow label="Tags" value={person.tags?.length ? person.tags.join(', ') : '—'} />
+          <DetailRow label="Tags" value={person.tags?.length ? person.tags.join(', ') : 'â€”'} />
         </dl>
       </section>
 
       <section className="profile-drawer__section">
         <h3>Check-ins</h3>
         {checkins.loading ? (
-          <p>Loading check-ins…</p>
+          <p>Loading check-insâ€¦</p>
         ) : checkins.error ? (
           <p className="text-danger">{checkins.error}</p>
         ) : checkins.data.length === 0 ? (
@@ -727,7 +771,7 @@ function ProfileDrawer({ person, checkins, cases, onClose, onRecordCheckin, canU
       <section className="profile-drawer__section">
         <h3>Recent cases</h3>
         {cases.loading ? (
-          <p>Loading case history…</p>
+          <p>Loading case historyâ€¦</p>
         ) : cases.error ? (
           <p className="text-danger">{cases.error}</p>
         ) : cases.data.length === 0 ? (
@@ -870,7 +914,7 @@ function AddPersonModal({ onClose, onSuccess }) {
             Cancel
           </button>
           <button type="submit" className="button button--primary" disabled={pending}>
-            {pending ? 'Saving…' : 'Save'}
+            {pending ? 'Savingâ€¦' : 'Save'}
           </button>
         </footer>
       </form>
@@ -926,7 +970,7 @@ function ImportRosterModal({ onClose, onSuccess }) {
             Cancel
           </button>
           <button type="submit" className="button button--primary" disabled={pending || !text.trim()}>
-            {pending ? 'Importing…' : 'Import'}
+            {pending ? 'Importingâ€¦' : 'Import'}
           </button>
         </footer>
       </form>
@@ -939,7 +983,7 @@ function OnboardingModal({ onClose, checkins, onMark, canUpdateCheckins }) {
   return (
     <Modal title="Onboarding checklist" onClose={onClose}>
       {checkins.loading ? (
-        <p>Loading upcoming onboarding tasks…</p>
+        <p>Loading upcoming onboarding tasksâ€¦</p>
       ) : checkins.error ? (
         <p className="text-danger">{checkins.error}</p>
       ) : entries.length === 0 ? (
@@ -1014,7 +1058,7 @@ function OffboardModal({ person, onClose, onSuccess }) {
             Cancel
           </button>
           <button type="submit" className="button button--primary" disabled={pending}>
-            {pending ? 'Offboarding…' : 'Confirm'}
+            {pending ? 'Offboardingâ€¦' : 'Confirm'}
           </button>
         </footer>
       </form>

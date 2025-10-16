@@ -147,7 +147,8 @@ async function computeCaseSnapshot({ moderation, guildId, period, date }) {
 
   try {
     const limit = 400
-    const cases = await moderation.listCasesForGuild(guildId, { status: 'all', category: 'all', limit })
+    const response = await moderation.listCasesForGuild(guildId, { status: 'all', category: 'all', limit })
+    const cases = Array.isArray(response?.items) ? response.items : Array.isArray(response) ? response : []
     const periodDays = resolvePeriodDays(period)
     const windowEnd = endOfDay(date)
     const windowStart = subtractDays(windowEnd, periodDays - 1)

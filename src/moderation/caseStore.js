@@ -2,6 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
+import { recordAuditEntry } from '../audit/auditLog.js'
 
 const moderationDirectory = path.resolve(process.cwd(), 'data', 'moderation')
 const casesFile = path.join(moderationDirectory, 'cases.json')
@@ -458,10 +459,212 @@ export async function updateCaseStatus({
   )
 
   await persistData(data)
-  emitStoreEvent('case:status', summarizeCaseUpdate(caseEntry))
-  emitStoreEvent('cases:updated', summarizeCaseUpdate(caseEntry))
+  const summary = summarizeCaseUpdate(caseEntry)
+  emitStoreEvent('case:status', summary)
+  emitStoreEvent('cases:updated', summary)
   emitStoreEvent('stats:updated', buildStatsSnapshot(data))
-  return caseEntry
+
+  await recordAuditEntry({
+    action: 'case.status',
+    actorId: actorId ? String(actorId) : null,
+    actorTag: actorTag ?? null,
+    actorRoles: [],
+    guildId: caseEntry.guildId ?? null,
+    targetId: caseEntry.id ?? null,
+    targetType: 'case',
+    targetLabel: caseEntry.subject ?? caseEntry.id ?? null,
+    metadata: {
+      status: normalized,
+      note: note ?? null
+    }
+  })
+
+  return serializeCaseEntry(caseEntry, { includeTimeline: true })
+}
+
+export async function setCaseAssignee({
+  guildId,
+  caseId,
+  assigneeId,
+  assigneeTag,
+  assigneeDisplayName,
+  actorId,
+  actorTag
+}) {
+  if (!guildId || !caseId) {
+    throw new Error('guildId and caseId are required to update case assignment')
+  }
+
+  const data = await loadData()
+  const caseEntry = findCase(data, guildId, caseId)
+  if (!caseEntry) {
+    throw new Error('Case not found')
+  }
+
+  const timestamp = new Date().toISOString()
+  caseEntry.assignee = normalizeAssigneeRecord(caseEntry.assignee)
+  const previous = serializeAssignee(caseEntry.assignee)
+  const actorType = actorId ? 'moderator' : 'system'
+
+  const normalizedAssigneeId = assigneeId ? String(assigneeId) : null
+  const normalizedAssigneeTag = assigneeTag ?? null
+  const normalizedDisplayName =
+    assigneeDisplayName ?? normalizedAssigneeTag ?? previous.displayName ?? null
+
+  if (normalizedAssigneeId || normalizedAssigneeTag || normalizedDisplayName) {
+    caseEntry.assignee = normalizeAssigneeRecord(
+      {
+        id: normalizedAssigneeId ?? caseEntry.assignee.id,
+        tag: normalizedAssigneeTag ?? caseEntry.assignee.tag,
+        displayName: normalizedDisplayName ?? caseEntry.assignee.displayName,
+        assignedAt: timestamp,
+        assignedById: actorId ? String(actorId) : caseEntry.assignee.assignedById,
+        assignedByTag: actorTag ?? caseEntry.assignee.assignedByTag
+      },
+      caseEntry.assignee
+    )
+    caseEntry.assignee.assignedAt = timestamp
+    caseEntry.assignee.assignedById = actorId ? String(actorId) : caseEntry.assignee.assignedById
+    caseEntry.assignee.assignedByTag = actorTag ?? caseEntry.assignee.assignedByTag
+  } else {
+    caseEntry.assignee = normalizeAssigneeRecord(null)
+    caseEntry.assignee.assignedAt = timestamp
+    caseEntry.assignee.assignedById = actorId ? String(actorId) : null
+    caseEntry.assignee.assignedByTag = actorTag ?? null
+  }
+
+  caseEntry.updatedAt = timestamp
+  data.updatedAt = timestamp
+
+  if (caseEntry.assignee.id) {
+    ensureParticipant(caseEntry, {
+      type: 'moderator',
+      id: caseEntry.assignee.id,
+      tag: caseEntry.assignee.tag ?? caseEntry.assignee.displayName ?? null
+    })
+  }
+
+  caseEntry.auditLog.push({
+    id: createId(),
+    type: 'assignment',
+    action: 'assignment',
+    actorId: actorId ? String(actorId) : null,
+    actorTag: actorTag ?? null,
+    actorType,
+    createdAt: timestamp,
+    metadata: {
+      previousAssigneeId: previous.id ?? null,
+      previousAssigneeTag: previous.tag ?? null,
+      assigneeId: caseEntry.assignee.id ?? null,
+      assigneeTag: caseEntry.assignee.tag ?? null,
+      assigneeDisplayName: caseEntry.assignee.displayName ?? null
+    }
+  })
+  trimAuditLog(caseEntry)
+
+  await persistData(data)
+
+  const summary = summarizeCaseUpdate(caseEntry)
+  emitStoreEvent('case:assignment', {
+    caseId: summary.caseId,
+    guildId: summary.guildId,
+    timestamp,
+    assignee: serializeAssignee(caseEntry.assignee),
+    actorId: actorId ? String(actorId) : null,
+    actorTag: actorTag ?? null
+  })
+  emitStoreEvent('cases:updated', summary)
+
+  await recordAuditEntry({
+    action: 'case.assign',
+    actorId: actorId ? String(actorId) : null,
+    actorTag: actorTag ?? null,
+    actorRoles: [],
+    guildId: caseEntry.guildId ?? null,
+    targetId: caseEntry.id ?? null,
+    targetType: 'case',
+    targetLabel: caseEntry.subject ?? caseEntry.id ?? null,
+    metadata: {
+      assigneeId: caseEntry.assignee.id ?? null,
+      assigneeTag: caseEntry.assignee.tag ?? null,
+      assigneeDisplayName: caseEntry.assignee.displayName ?? null
+    }
+  })
+
+  return serializeCaseEntry(caseEntry, { includeTimeline: true })
+}
+
+export async function updateCaseSla({ guildId, caseId, dueAt, actorId, actorTag }) {
+  if (!guildId || !caseId) {
+    throw new Error('guildId and caseId are required to update the case SLA')
+  }
+
+  const data = await loadData()
+  const caseEntry = findCase(data, guildId, caseId)
+  if (!caseEntry) {
+    throw new Error('Case not found')
+  }
+
+  const timestamp = new Date().toISOString()
+  caseEntry.sla = normalizeSlaRecord(caseEntry.sla)
+  const previous = serializeSla(caseEntry.sla, caseEntry.status)
+  const normalizedDueAt = normalizeIsoDate(dueAt)
+
+  caseEntry.sla.dueAt = normalizedDueAt
+  caseEntry.sla.updatedAt = timestamp
+  caseEntry.sla.updatedById = actorId ? String(actorId) : null
+  caseEntry.sla.updatedByTag = actorTag ?? null
+  if (!normalizedDueAt) {
+    caseEntry.sla.completedAt = null
+  } else if (isTerminalStatus(caseEntry.status) && !caseEntry.sla.completedAt) {
+    caseEntry.sla.completedAt = timestamp
+  }
+
+  caseEntry.updatedAt = timestamp
+  data.updatedAt = timestamp
+
+  caseEntry.auditLog.push({
+    id: createId(),
+    type: 'sla',
+    action: 'sla',
+    actorId: actorId ? String(actorId) : null,
+    actorTag: actorTag ?? null,
+    actorType: actorId ? 'moderator' : 'system',
+    createdAt: timestamp,
+    metadata: {
+      dueAt: normalizedDueAt,
+      previousDueAt: previous.dueAt ?? null,
+      state: evaluateSlaState(caseEntry.sla, caseEntry.status)
+    }
+  })
+  trimAuditLog(caseEntry)
+
+  await persistData(data)
+  const summary = summarizeCaseUpdate(caseEntry)
+  emitStoreEvent('case:sla', {
+    caseId: summary.caseId,
+    guildId: summary.guildId,
+    timestamp,
+    sla: serializeSla(caseEntry.sla, caseEntry.status)
+  })
+  emitStoreEvent('cases:updated', summary)
+
+  await recordAuditEntry({
+    action: 'case.sla',
+    actorId: actorId ? String(actorId) : null,
+    actorTag: actorTag ?? null,
+    actorRoles: [],
+    guildId: caseEntry.guildId ?? null,
+    targetId: caseEntry.id ?? null,
+    targetType: 'case',
+    targetLabel: caseEntry.subject ?? caseEntry.id ?? null,
+    metadata: {
+      dueAt: normalizedDueAt,
+      state: evaluateSlaState(caseEntry.sla, caseEntry.status)
+    }
+  })
+
+  return serializeCaseEntry(caseEntry, { includeTimeline: true })
 }
 
 export async function deleteCase({ guildId, caseId, actorId, actorTag, actorType = 'system' }) {
@@ -502,33 +705,112 @@ export async function deleteCase({ guildId, caseId, actorId, actorTag, actorType
   return removed
 }
 
-export async function listCases({ guildId, status, category = 'all', limit = 50 }) {
-  const data = await loadData()
-  let items = data.cases.filter((item) => item.guildId === String(guildId))
-  if (status && status !== 'all') {
-    const normalized = normalizeStatus(status)
-    if (!normalized) {
-      return []
-    }
-    items = items.filter((item) => item.status === normalized)
+export async function listCases({
+  guildId,
+  status = 'all',
+  category = 'all',
+  limit = 50,
+  offset = 0,
+  assignee = 'all',
+  mine = false,
+  userId = null,
+  search = '',
+  sla = 'all',
+  sortBy = 'updatedAt',
+  direction = 'desc',
+  includeArchived = true
+} = {}) {
+  if (!guildId) {
+    return { total: 0, items: [] }
   }
+
+  const data = await loadData()
+  const normalizedGuildId = String(guildId)
+  let items = data.cases.filter((item) => item.guildId === normalizedGuildId)
+
+  if (status && status !== 'all') {
+    const normalizedStatus = normalizeStatus(status)
+    if (!normalizedStatus) {
+      return { total: 0, items: [] }
+    }
+    if (normalizedStatus === 'active') {
+      items = items.filter((item) => !isTerminalStatus(item.status))
+    } else {
+      items = items.filter((item) => item.status === normalizedStatus)
+    }
+  }
+
   const normalizedCategory = String(category ?? 'all').toLowerCase().trim()
   if (normalizedCategory && normalizedCategory !== 'all') {
+    const resolvedCategory = normalizeCategory(normalizedCategory)
+    items = items.filter((item) => normalizeCategory(item.category) === resolvedCategory)
+  }
+
+  if (!includeArchived) {
+    items = items.filter((item) => normalizeStatus(item.status) !== 'archived')
+  }
+
+  const normalizedAssignee = typeof assignee === 'string' ? assignee.trim().toLowerCase() : 'all'
+  const normalizedUserId = userId ? String(userId) : null
+  if (mine && normalizedUserId) {
+    items = items.filter((item) => (item.assignee?.id ?? null) === normalizedUserId)
+  } else if (normalizedAssignee === 'me' && normalizedUserId) {
+    items = items.filter((item) => (item.assignee?.id ?? null) === normalizedUserId)
+  } else if (normalizedAssignee === 'unassigned') {
+    items = items.filter((item) => !item.assignee?.id)
+  } else if (normalizedAssignee && normalizedAssignee !== 'all') {
+    items = items.filter((item) => {
+      const assigneeId = item.assignee?.id ? String(item.assignee.id).toLowerCase() : null
+      const assigneeTag = item.assignee?.tag ? String(item.assignee.tag).toLowerCase() : null
+      return (
+        (assigneeId && assigneeId === normalizedAssignee) ||
+        (assigneeTag && assigneeTag === normalizedAssignee)
+      )
+    })
+  }
+
+  const trimmedSearch = typeof search === 'string' ? search.trim().toLowerCase() : ''
+  if (trimmedSearch) {
+    items = items.filter((item) => caseMatchesSearch(item, trimmedSearch))
+  }
+
+  const normalizedSla = typeof sla === 'string' ? sla.trim().toLowerCase() : 'all'
+  if (normalizedSla && normalizedSla !== 'all') {
     items = items.filter(
-      (item) => normalizeCategory(item.category) === normalizeCategory(normalizedCategory)
+      (item) => evaluateSlaState(item.sla, item.status) === normalizedSla
     )
   }
-  return items.slice(0, Math.max(0, Math.min(limit, MAX_CASES)))
+
+  const sortKey = typeof sortBy === 'string' ? sortBy.toLowerCase() : 'updatedat'
+  const descending = String(direction ?? 'desc').toLowerCase() !== 'asc'
+  items = items.slice().sort((left, right) => compareCases(left, right, sortKey, descending))
+
+  const total = items.length
+  const pageSize = Math.min(Math.max(Number(limit) || 50, 1), MAX_CASES)
+  const start = Math.max(Number(offset) || 0, 0)
+  const page = items.slice(start, start + pageSize).map((entry) => serializeCaseEntry(entry))
+
+  return { total, items: page }
 }
 
 export async function getCase(caseId) {
+  if (!caseId) {
+    return null
+  }
   const data = await loadData()
-  return data.cases.find((entry) => entry.id === caseId) ?? null
+  const entry = data.cases.find((item) => item.id === caseId)
+  return entry ? serializeCaseEntry(entry, { includeTimeline: true }) : null
 }
 
 export async function getCaseForGuild(guildId, caseId) {
+  if (!guildId || !caseId) {
+    return null
+  }
   const data = await loadData()
-  return data.cases.find((entry) => entry.id === caseId && entry.guildId === String(guildId)) ?? null
+  const entry = data.cases.find(
+    (item) => item.id === caseId && item.guildId === String(guildId)
+  )
+  return entry ? serializeCaseEntry(entry, { includeTimeline: true }) : null
 }
 
 export async function getModerationStats() {
@@ -545,7 +827,10 @@ export async function getModerationStats() {
 
 export async function getRecentCases(limit = 50) {
   const data = await loadData()
-  return data.cases.slice(0, Math.max(0, Math.min(limit, MAX_CASES)))
+  const window = Math.min(Math.max(Number(limit) || 50, 1), MAX_CASES)
+  return data.cases
+    .slice(0, window)
+    .map((entry) => serializeCaseEntry(entry))
 }
 
 export async function getUserTotals(guildId, userId) {
@@ -586,7 +871,9 @@ function summarizeCaseUpdate(caseEntry) {
     userTag: caseEntry.userTag ?? null,
     lastMessageAt: caseEntry.lastMessageAt ?? null,
     category: normalizeCategory(caseEntry.category),
-    ticketType: caseEntry.ticketType ?? null
+    ticketType: caseEntry.ticketType ?? null,
+    assignee: serializeAssignee(caseEntry.assignee),
+    sla: serializeSla(caseEntry.sla, caseEntry.status)
   }
 }
 
@@ -685,6 +972,21 @@ function createCaseShell({
     lastMessageAt: null,
     subject: subject ?? null,
     participants: [],
+    assignee: {
+      id: null,
+      tag: null,
+      displayName: null,
+      assignedById: null,
+      assignedByTag: null,
+      assignedAt: null
+    },
+    sla: {
+      dueAt: null,
+      updatedAt: null,
+      updatedById: null,
+      updatedByTag: null,
+      completedAt: null
+    },
     unreadCount: 0,
     actions: [],
     messages: [],
@@ -858,8 +1160,15 @@ function applyCaseStatus(data, caseEntry, status, actor = {}, timestamp = new Da
   caseEntry.auditLog.push(entry)
   trimAuditLog(caseEntry)
 
+  if (!caseEntry.sla || typeof caseEntry.sla !== 'object') {
+    caseEntry.sla = normalizeSlaRecord(caseEntry.sla)
+  }
+
   if (isTerminalStatus(normalized)) {
     caseEntry.unreadCount = 0
+    caseEntry.sla.completedAt = timestamp
+  } else if (caseEntry.sla.completedAt) {
+    caseEntry.sla.completedAt = null
   }
 
   return true
@@ -1157,6 +1466,264 @@ function normalizeCategory(category) {
   return 'moderation'
 }
 
+function normalizeIsoDate(value) {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  if (value instanceof Date) {
+    const time = value.getTime()
+    return Number.isNaN(time) ? null : value.toISOString()
+  }
+  if (typeof value === 'number') {
+    const date = new Date(value)
+    return Number.isNaN(date.getTime()) ? null : date.toISOString()
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return null
+    }
+    const parsed = new Date(trimmed)
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString()
+  }
+  return null
+}
+
+function normalizeAssigneeRecord(raw, fallback = {}) {
+  const source = typeof raw === 'object' && raw !== null ? raw : {}
+  const base = typeof fallback === 'object' && fallback !== null ? fallback : {}
+  const result = {
+    id: null,
+    tag: null,
+    displayName: null,
+    assignedById: null,
+    assignedByTag: null,
+    assignedAt: null
+  }
+
+  const idValue =
+    source.id ?? source.userId ?? base.id ?? base.userId ?? base.assigneeId ?? null
+  result.id = idValue ? String(idValue) : null
+
+  result.tag =
+    source.tag ?? source.userTag ?? base.tag ?? base.userTag ?? base.assigneeTag ?? null
+
+  result.displayName =
+    source.displayName ??
+    source.name ??
+    source.label ??
+    base.displayName ??
+    base.name ??
+    base.label ??
+    (result.tag ?? null)
+
+  const assignedByValue =
+    source.assignedById ?? source.assignedBy ?? base.assignedById ?? base.assignedBy ?? null
+  result.assignedById = assignedByValue ? String(assignedByValue) : null
+  result.assignedByTag = source.assignedByTag ?? base.assignedByTag ?? null
+  result.assignedAt = normalizeIsoDate(source.assignedAt ?? source.updatedAt ?? base.assignedAt ?? null)
+
+  return result
+}
+
+function normalizeSlaRecord(raw, fallback = {}) {
+  const source = typeof raw === 'object' && raw !== null ? raw : {}
+  const base = typeof fallback === 'object' && fallback !== null ? fallback : {}
+  return {
+    dueAt: normalizeIsoDate(source.dueAt ?? source.target ?? base.dueAt ?? base.slaDueAt ?? null),
+    updatedAt: normalizeIsoDate(source.updatedAt ?? base.updatedAt ?? null),
+    updatedById: source.updatedById
+      ? String(source.updatedById)
+      : base.updatedById
+        ? String(base.updatedById)
+        : null,
+    updatedByTag: source.updatedByTag ?? base.updatedByTag ?? null,
+    completedAt: normalizeIsoDate(
+      source.completedAt ?? base.completedAt ?? base.slaCompletedAt ?? null
+    )
+  }
+}
+
+function evaluateSlaState(sla, caseStatus) {
+  const statusValue = caseStatus ? normalizeStatus(caseStatus) : null
+  if (!sla || !sla.dueAt) {
+    return 'none'
+  }
+  if (sla.completedAt || isTerminalStatus(statusValue)) {
+    return 'met'
+  }
+  const due = Date.parse(sla.dueAt)
+  if (!Number.isFinite(due)) {
+    return 'none'
+  }
+  const now = Date.now()
+  if (due < now) {
+    return 'overdue'
+  }
+  const hoursUntilDue = (due - now) / (1000 * 60 * 60)
+  if (hoursUntilDue <= 24) {
+    return 'due-soon'
+  }
+  return 'pending'
+}
+
+function serializeAssignee(raw) {
+  return normalizeAssigneeRecord(raw)
+}
+
+function serializeSla(raw, caseStatus) {
+  const normalized = normalizeSlaRecord(raw)
+  return {
+    ...normalized,
+    state: evaluateSlaState(normalized, caseStatus)
+  }
+}
+
+function parseTimestamp(value) {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null
+  }
+  const time = Date.parse(value)
+  return Number.isNaN(time) ? null : time
+}
+
+function compareNullableDates(left, right, direction) {
+  const leftTime = parseTimestamp(left)
+  const rightTime = parseTimestamp(right)
+  if (leftTime === rightTime) {
+    return 0
+  }
+  if (leftTime === null) {
+    return 1
+  }
+  if (rightTime === null) {
+    return -1
+  }
+  if (leftTime < rightTime) {
+    return -1 * direction
+  }
+  if (leftTime > rightTime) {
+    return 1 * direction
+  }
+  return 0
+}
+
+function compareCases(left, right, sortKey, descending) {
+  const direction = descending ? -1 : 1
+  let result = 0
+  switch (sortKey) {
+    case 'created':
+    case 'createdat':
+      result = compareNullableDates(left.createdAt, right.createdAt, direction)
+      break
+    case 'lastmessage':
+    case 'lastmessageat':
+      result = compareNullableDates(left.lastMessageAt, right.lastMessageAt, direction)
+      break
+    case 'sla':
+    case 'sladue':
+    case 'sladueat':
+      result = compareNullableDates(left.sla?.dueAt ?? null, right.sla?.dueAt ?? null, direction)
+      break
+    case 'status':
+      result =
+        String(left.status ?? '').localeCompare(String(right.status ?? '')) * direction
+      break
+    default:
+      result = compareNullableDates(left.updatedAt, right.updatedAt, direction)
+      break
+  }
+
+  if (result === 0) {
+    result = compareNullableDates(left.updatedAt, right.updatedAt, -1)
+  }
+
+  return result
+}
+
+function caseMatchesSearch(entry, query) {
+  if (!entry) {
+    return false
+  }
+  const haystacks = [
+    entry.id,
+    entry.subject,
+    entry.status,
+    entry.userId,
+    entry.userTag,
+    entry.metadata?.reason,
+    entry.metadata?.supportTopic,
+    entry.metadata?.supportContext,
+    entry.assignee?.tag,
+    entry.assignee?.displayName
+  ]
+
+  if (Array.isArray(entry.participants)) {
+    for (const participant of entry.participants) {
+      haystacks.push(participant.tag, participant.displayName, participant.id)
+    }
+  }
+
+  const normalized = query.toLowerCase()
+  return haystacks.some(
+    (value) => typeof value === 'string' && value.toLowerCase().includes(normalized)
+  )
+}
+
+function serializeCaseEntry(entry, { includeTimeline = false } = {}) {
+  if (!entry) {
+    return null
+  }
+
+  const serialized = {
+    id: entry.id,
+    guildId: entry.guildId,
+    guildName: entry.guildName ?? null,
+    userId: entry.userId,
+    userTag: entry.userTag ?? null,
+    status: entry.status ?? DEFAULT_STATUS,
+    source: entry.source ?? 'system',
+    category: normalizeCategory(entry.category),
+    ticketType: entry.ticketType ?? null,
+    intakeChannelId: entry.intakeChannelId ?? null,
+    intakeThreadId: entry.intakeThreadId ?? null,
+    intakeMessageId: entry.intakeMessageId ?? null,
+    metadata: entry.metadata ? { ...entry.metadata } : {},
+    openedBy: entry.openedBy ? { ...entry.openedBy } : null,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    lastMessageAt: entry.lastMessageAt ?? null,
+    subject: entry.subject ?? null,
+    unreadCount: entry.unreadCount ?? 0,
+    assignee: serializeAssignee(entry.assignee),
+    sla: serializeSla(entry.sla, entry.status),
+    participants: Array.isArray(entry.participants)
+      ? entry.participants.map((participant) => ({ ...participant }))
+      : []
+  }
+
+  serialized.actions = Array.isArray(entry.actions)
+    ? entry.actions.map((action) => ({ ...action }))
+    : []
+
+  if (includeTimeline) {
+    serialized.messages = Array.isArray(entry.messages)
+      ? entry.messages.map((message) => ({ ...message }))
+      : []
+    serialized.auditLog = Array.isArray(entry.auditLog)
+      ? entry.auditLog.map((log) => ({ ...log }))
+      : []
+  } else {
+    serialized.messages = []
+    serialized.auditLog = []
+  }
+
+  return serialized
+}
+
 function buildInitialMetadata(entry = {}) {
   const base = typeof entry.metadata === 'object' && entry.metadata !== null ? { ...entry.metadata } : {}
   if (entry.reason && !base.reason) {
@@ -1390,11 +1957,26 @@ function mergeWithDefaults(raw = {}) {
           typeof item.subject === 'string' && item.subject.trim().length
             ? item.subject.trim()
             : null,
-        participants: normalizeParticipants(item.participants, {
-          userId: item.userId ? String(item.userId) : null,
-          userTag: item.userTag ?? null
-        }),
-        unreadCount: coerceNonNegativeInteger(item.unreadCount, 0),
+          participants: normalizeParticipants(item.participants, {
+            userId: item.userId ? String(item.userId) : null,
+            userTag: item.userTag ?? null
+          }),
+          assignee: normalizeAssigneeRecord(item.assignee, {
+            id: item.assigneeId ?? item.assignedTo ?? null,
+            tag: item.assigneeTag ?? item.assignedToTag ?? null,
+            displayName: item.assigneeDisplayName ?? item.assignedToName ?? null,
+            assignedAt: item.assignedAt ?? null,
+            assignedById: item.assignedById ?? item.assignmentActorId ?? null,
+            assignedByTag: item.assignedByTag ?? item.assignmentActorTag ?? null
+          }),
+          sla: normalizeSlaRecord(item.sla, {
+            dueAt: item.slaDueAt ?? null,
+            updatedAt: item.slaUpdatedAt ?? null,
+            updatedById: item.slaUpdatedById ?? null,
+            updatedByTag: item.slaUpdatedByTag ?? null,
+            completedAt: item.slaCompletedAt ?? null
+          }),
+          unreadCount: coerceNonNegativeInteger(item.unreadCount, 0),
         actions: Array.isArray(item.actions)
           ? item.actions
               .slice(0, MAX_ACTIONS_PER_CASE)
@@ -1423,14 +2005,16 @@ function mergeWithDefaults(raw = {}) {
         if (caseEntry.unreadCount > caseEntry.messages.length) {
           caseEntry.unreadCount = caseEntry.messages.length
         }
-        assignCaseSubject(caseEntry, {
-          reason: caseEntry.metadata?.reason ?? null,
-          action: caseEntry.actions[0]?.type ?? null
+          assignCaseSubject(caseEntry, {
+            reason: caseEntry.metadata?.reason ?? null,
+            action: caseEntry.actions[0]?.type ?? null
+          })
+          caseEntry.assignee = normalizeAssigneeRecord(caseEntry.assignee)
+          caseEntry.sla = normalizeSlaRecord(caseEntry.sla)
+          trimAuditLog(caseEntry)
+          trimMessages(caseEntry)
+          return caseEntry
         })
-        trimAuditLog(caseEntry)
-        trimMessages(caseEntry)
-        return caseEntry
-      })
   }
 
   if (raw.userTotals && typeof raw.userTotals === 'object') {

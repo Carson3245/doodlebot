@@ -1,6 +1,5 @@
-
-import { useEffect, useMemo, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useOutletContext } from 'react-router-dom'
 import { useGuild } from '../guildContext.js'
 
 const PERIOD_LABELS = {
@@ -89,6 +88,25 @@ const FALLBACK_ENGAGEMENT = {
   }
 }
 
+const QUICK_ACTIONS = [
+  {
+    id: 'daily-summary',
+    label: 'Daily summary',
+    description: 'Compile a quick snapshot of members, flow, and engagement.'
+  },
+  {
+    id: 'onboarding-followup',
+    label: 'Onboarding follow-up',
+    description: 'List onboarding members who need a check-in today.'
+  },
+  {
+    id: 'case-health',
+    label: 'Case health',
+    description: 'Highlight active, escalated, and overdue cases.',
+    requiresGuild: true
+  }
+]
+
 export default function OverviewPage() {
   const { period = '30d' } = useOutletContext() ?? {}
   const periodLabel = PERIOD_LABELS[period] ?? 'the previous period'
@@ -98,6 +116,8 @@ export default function OverviewPage() {
   const [headcount, setHeadcount] = useState({ loading: true, data: FALLBACK_HEADCOUNT, error: null })
   const [flow, setFlow] = useState({ loading: true, data: FALLBACK_FLOW, error: null })
   const [engagement, setEngagement] = useState({ loading: true, data: FALLBACK_ENGAGEMENT, error: null })
+  const [notice, setNotice] = useState(null)
+  const [runningAction, setRunningAction] = useState(null)
 
   const guildId = selectedGuild?.id ?? null
 
@@ -226,6 +246,38 @@ export default function OverviewPage() {
     }
   }, [period, guildId])
 
+  const handleQuickAction = useCallback(
+    async (actionId) => {
+      const definition = QUICK_ACTIONS.find((action) => action.id === actionId)
+      if (definition?.requiresGuild && !guildId) {
+        setNotice({ type: 'error', text: 'Select a server to run this action.' })
+        return
+      }
+
+      setNotice(null)
+      setRunningAction(actionId)
+      try {
+        const response = await fetch('/api/quick-actions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: actionId, guildId, period })
+        })
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}))
+          throw new Error(payload?.error ?? `Request failed with status ${response.status}`)
+        }
+        const payload = await response.json()
+        setNotice({ type: 'success', text: payload?.message ?? 'Quick action completed.' })
+      } catch (error) {
+        console.error(`Quick action (${actionId}) failed`, error)
+        setNotice({ type: 'error', text: error?.message ?? 'Unable to run that action.' })
+      } finally {
+        setRunningAction(null)
+      }
+    },
+    [guildId, period]
+  )
+
   const kpiCards = useMemo(() => {
     const data = kpis.data
     return [
@@ -246,10 +298,25 @@ export default function OverviewPage() {
           <p>Everything happening across moderation and people operations.</p>
         </div>
         <div className="page__header-actions">
-          <button type="button" className="button button--ghost">Export snapshot</button>
-          <button type="button" className="button button--primary">Daily summary</button>
+          <button
+            type="button"
+            className="button button--primary"
+            onClick={() => handleQuickAction('daily-summary')}
+            disabled={runningAction === 'daily-summary'}
+          >
+            {runningAction === 'daily-summary' ? 'Running...' : 'Daily summary'}
+          </button>
         </div>
       </header>
+
+      {notice && (
+        <div className={`inline-alert inline-alert--${notice.type}`} role="status">
+          <span>{notice.text}</span>
+          <button type="button" className="inline-alert__close" onClick={() => setNotice(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
 
       <section className="kpi-grid" aria-label="Key performance indicators">
         {kpiCards.map((kpi) => (
@@ -272,12 +339,18 @@ export default function OverviewPage() {
           hint="Snapshot at the end of each month"
           status={headcount}
           render={(data) => <HeadcountPreview data={data} />}
+          detailsHref="/people"
+          detailsLabel="View people"
+          connectHref="/settings?section=people-data"
         />
         <ChartCard
           title="Entries vs exits"
           hint="Month-over-month flow"
           status={flow}
           render={(data) => <FlowPreview data={data} />}
+          detailsHref="/people"
+          detailsLabel="Manage roster"
+          connectHref="/settings?section=people-data"
         />
         <ChartCard
           title="Engagement by channel"
@@ -285,6 +358,9 @@ export default function OverviewPage() {
           status={engagement}
           orientation="horizontal"
           render={(data) => <EngagementPreview data={data} />}
+          detailsHref="/insights"
+          detailsLabel="Open insights"
+          connectHref="/settings?section=integrations"
         />
       </section>
 
@@ -295,9 +371,21 @@ export default function OverviewPage() {
             <p>Jump to the most common tasks.</p>
           </div>
           <div className="quick-actions__grid">
-            <QuickActionButton label="Announce onboarding" description="Send the welcome packet to #announcements" />
-            <QuickActionButton label="Daily summary" description="Post KPIs to the leadership channel" />
-            <QuickActionButton label="Pause commands" description="Temporarily disable member commands" />
+            {QUICK_ACTIONS.map((action) => {
+              const requiresSelection = !guildId && action.requiresGuild
+              const disabled = runningAction === action.id || requiresSelection
+              const tooltip = requiresSelection ? 'Select a server to run this action.' : action.tooltip ?? null
+              return (
+                <QuickActionButton
+                  key={action.id}
+                  label={action.label}
+                  description={action.description}
+                  disabled={disabled}
+                  tooltip={tooltip}
+                  onClick={() => handleQuickAction(action.id)}
+                />
+              )
+            })}
           </div>
         </div>
         <div className="alert-grid" aria-label="Alerts">
@@ -307,7 +395,7 @@ export default function OverviewPage() {
           </div>
           <AlertCard
             title="Turnover spike"
-            message="Exits are 2× higher than last month. Review exit interviews."
+            message="Exits are 2x higher than last month. Review exit interviews."
             severity="warning"
             href="/people"
           />
@@ -329,9 +417,9 @@ function KpiCard({ label, value, rawValue, delta, loading, periodLabel, unit }) 
   return (
     <article className="kpi-card" title={tooltip}>
       <p className="kpi-card__label">{label}</p>
-      <p className="kpi-card__value">{loading ? '—' : value}</p>
+      <p className="kpi-card__value">{loading ? 'N/A' : value}</p>
       <p className={`kpi-card__delta kpi-card__delta--${trendLabel}`} aria-live="polite">
-        {loading ? 'Calculating…' : deltaText}
+        {loading ? 'Calculating...' : deltaText}
       </p>
     </article>
   )
@@ -355,18 +443,38 @@ function buildDelta(current, delta, periodLabel, unit) {
   const previousUnit = unit ? (Math.abs(previous) === 1 ? unit.singular : unit.plural) : null
   const tooltip = [
     `Current: ${formatNumber(current)}${currentUnit ? ' ' + currentUnit : ''}`,
-    `Previous: ${previous >= 0 ? formatNumber(previous) : '—'}${previousUnit ? ' ' + previousUnit : ''}`,
+    `Previous: ${previous >= 0 ? formatNumber(previous) : 'N/A'}${previousUnit ? ' ' + previousUnit : ''}`,
     `Change: ${deltaMain}${percent !== null ? ' (' + percent + '%)' : ''}`
   ].join('')
   return { trendLabel, deltaText, tooltip }
 }
 
-function ChartCard({ title, hint, status, orientation = 'vertical', render }) {
+function ChartCard({
+  title,
+  hint,
+  status,
+  orientation = 'vertical',
+  render,
+  detailsHref,
+  onDetailsClick,
+  detailsLabel = 'Details',
+  connectHref,
+  onConnect
+}) {
   const { loading, error, data } = status
 
   let content
   if (loading) {
-    content = <ChartPlaceholder status={status} label="Loading data…" orientation={orientation} hideCta />
+    content = (
+      <ChartPlaceholder
+        status={status}
+        label="Loading data..."
+        orientation={orientation}
+        hideCta
+        connectHref={connectHref}
+        onConnect={onConnect}
+      />
+    )
   } else if (error) {
     const errorMessage = typeof error === 'string' ? error : 'Unable to load data'
     content = (
@@ -374,6 +482,8 @@ function ChartCard({ title, hint, status, orientation = 'vertical', render }) {
         status={{ loading: false, error: true }}
         label={`Error: ${errorMessage}`}
         orientation={orientation}
+        connectHref={connectHref}
+        onConnect={onConnect}
       />
     )
   } else if (render && hasChartData(data)) {
@@ -385,6 +495,8 @@ function ChartCard({ title, hint, status, orientation = 'vertical', render }) {
         label="Visualization coming soon."
         orientation={orientation}
         hideCta
+        connectHref={connectHref}
+        onConnect={onConnect}
       />
     )
   } else {
@@ -393,7 +505,24 @@ function ChartCard({ title, hint, status, orientation = 'vertical', render }) {
         status={{ loading: false, error: null }}
         label="Connect a data source to unlock this chart."
         orientation={orientation}
+        connectHref={connectHref}
+        onConnect={onConnect}
       />
+    )
+  }
+
+  let action = null
+  if (detailsHref) {
+    action = (
+      <Link to={detailsHref} className="button button--ghost chart-card__action">
+        {detailsLabel}
+      </Link>
+    )
+  } else if (typeof onDetailsClick === 'function') {
+    action = (
+      <button type="button" className="button button--ghost chart-card__action" onClick={onDetailsClick}>
+        {detailsLabel}
+      </button>
     )
   }
 
@@ -404,26 +533,40 @@ function ChartCard({ title, hint, status, orientation = 'vertical', render }) {
           <h2>{title}</h2>
           {hint && <p>{hint}</p>}
         </div>
-        <button type="button" className="button button--ghost chart-card__action">Details</button>
+        {action}
       </header>
       <div className="chart-card__body">{content}</div>
     </article>
   )
 }
 
-function ChartPlaceholder({ status, label, orientation, hideCta = false }) {
+function ChartPlaceholder({ status, label, orientation, hideCta = false, connectHref, onConnect }) {
   const stateClass = status.loading
     ? 'chart-placeholder--loading'
     : status.error
       ? 'chart-placeholder--error'
       : 'chart-placeholder--empty'
+  let cta = null
+  if (!hideCta && !status.loading) {
+    if (connectHref) {
+      cta = (
+        <Link to={connectHref} className="button button--ghost chart-placeholder__cta">
+          Connect data
+        </Link>
+      )
+    } else if (typeof onConnect === 'function') {
+      cta = (
+        <button type="button" className="button button--ghost chart-placeholder__cta" onClick={onConnect}>
+          Connect data
+        </button>
+      )
+    }
+  }
   return (
     <div className={`chart-placeholder ${stateClass} chart-placeholder--${orientation}`} role="img" aria-label={label}>
       <div className="chart-placeholder__content">
         <span>{label}</span>
-        {!hideCta && !status.loading && (
-          <button type="button" className="button button--ghost chart-placeholder__cta">Connect data</button>
-        )}
+        {cta}
       </div>
     </div>
   )
@@ -444,14 +587,14 @@ function HeadcountPreview({ data }) {
   return (
     <div className="chart-preview">
       <p className="chart-preview__lead">
-        <strong>{currentValue !== null ? formatNumber(Math.round(currentValue)) : '—'}</strong>
+        <strong>{currentValue !== null ? formatNumber(Math.round(currentValue)) : 'N/A'}</strong>
         <span> members</span>
       </p>
       <TrendPill current={currentValue} previous={previousValue} unit={KPI_UNITS.active} />
       <ul className="chart-preview__list">
         {points.map((point) => (
           <li className="chart-preview__list-item" key={point.date ?? point.label}>
-            <span>{point.label ?? formatMonthLabelFromInput(point.date, '—')}</span>
+            <span>{point.label ?? formatMonthLabelFromInput(point.date, 'N/A')}</span>
             <span>{formatNumber(point.value)}</span>
           </li>
         ))}
@@ -482,8 +625,8 @@ function FlowPreview({ data }) {
   return (
     <div className="chart-preview">
       <p className="chart-preview__lead">
-        <strong>{currentEntries !== null ? formatNumber(currentEntries) : '—'}</strong> entries
-        <span> vs {currentExits !== null ? formatNumber(currentExits) : '—'} exits</span>
+        <strong>{currentEntries !== null ? formatNumber(currentEntries) : 'N/A'}</strong> entries
+        <span> vs {currentExits !== null ? formatNumber(currentExits) : 'N/A'} exits</span>
       </p>
       <TrendPill
         current={netCurrent}
@@ -508,7 +651,7 @@ function FlowPreview({ data }) {
                 : null
             return (
               <tr key={point.date ?? point.label}>
-                <td>{point.label ?? formatMonthLabelFromInput(point.date, '—')}</td>
+                <td>{point.label ?? formatMonthLabelFromInput(point.date, 'N/A')}</td>
                 <td>{formatNumber(point.entries)}</td>
                 <td>{formatNumber(point.exits)}</td>
                 <td>{formatSignedNumber(net)}</td>
@@ -535,7 +678,7 @@ function EngagementPreview({ data }) {
   return (
     <div className="chart-preview chart-preview--horizontal">
       <p className="chart-preview__lead">
-        <strong>{currentPerDay !== null ? formatNumber(Math.round(currentPerDay)) : '—'}</strong> avg messages/day
+        <strong>{currentPerDay !== null ? formatNumber(Math.round(currentPerDay)) : 'N/A'}</strong> avg messages/day
       </p>
       <TrendPill
         current={currentPerDay}
@@ -592,7 +735,7 @@ function TrendPill({ current, previous, unit, suffix = 'vs last period' }) {
   const roundedDelta = Math.round(absDelta)
   const unitLabel = unit ? (roundedDelta === 1 ? unit.singular : unit.plural) : null
   const percent = previous !== 0 ? Math.round((absDelta / Math.abs(previous)) * 100) : null
-  const prefix = delta > 0 ? '+' : '−'
+  const prefix = delta > 0 ? '+' : '-'
 
   return (
     <span className={`chart-preview__delta chart-preview__delta--${direction}`}>
@@ -623,17 +766,17 @@ function hasChartData(data) {
 
 function formatSignedNumber(value) {
   if (typeof value !== 'number' || Number.isNaN(value)) {
-    return '—'
+    return 'N/A'
   }
   if (value === 0) {
     return '0'
   }
-  return `${value > 0 ? '+' : '−'}${formatNumber(Math.abs(value))}`
+  return `${value > 0 ? '+' : '-'}${formatNumber(Math.abs(value))}`
 }
 
 function formatMonthLabelFromInput(value, fallback) {
   if (!value) {
-    return fallback ?? '—'
+    return fallback ?? 'N/A'
   }
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) {
@@ -642,10 +785,16 @@ function formatMonthLabelFromInput(value, fallback) {
   return MONTH_FORMATTER.format(parsed)
 }
 
-function QuickActionButton({ label, description }) {
+function QuickActionButton({ label, description, disabled, tooltip, onClick }) {
   return (
-    <button type="button" className="quick-action">
-      <span className="quick-action__label">{label}</span>
+    <button
+      type="button"
+      className="quick-action"
+      disabled={disabled}
+      onClick={onClick}
+      title={tooltip ?? undefined}
+    >
+      <span className="quick-action__label">{disabled ? 'Running...' : label}</span>
       <span className="quick-action__description">{description}</span>
     </button>
   )
@@ -665,7 +814,7 @@ function AlertCard({ title, message, severity, href }) {
 
 function formatNumber(value) {
   if (typeof value !== 'number' || Number.isNaN(value)) {
-    return value ?? '—'
+    return value ?? 'N/A'
   }
   if (value >= 1_000_000) {
     return `${(value / 1_000_000).toFixed(1)}M`
@@ -675,3 +824,4 @@ function formatNumber(value) {
   }
   return value.toLocaleString()
 }
+

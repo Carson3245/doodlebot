@@ -29,8 +29,9 @@ export async function execute(interaction) {
 
   try {
     const totals = await moderation.getUserTotals(interaction.guild.id, target.id);
-    const cases = await moderation.listCasesForGuild(interaction.guild.id, { status: 'all', limit: 50 });
-    const matchingCases = (cases ?? []).filter((entry) => entry.userId === target.id);
+    const response = await moderation.listCasesForGuild(interaction.guild.id, { status: 'all', limit: 50 });
+    const cases = Array.isArray(response?.items) ? response.items : Array.isArray(response) ? response : [];
+    const matchingCases = cases.filter((entry) => entry.userId === target.id);
     const activeCases = matchingCases.filter(
       (entry) => !TERMINAL_STATUSES.has(String(entry.status ?? 'open').toLowerCase())
     );

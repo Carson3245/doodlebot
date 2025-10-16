@@ -16,7 +16,9 @@ import {
   listCases,
   getCaseForGuild,
   getCase,
-  deleteCase
+  deleteCase,
+  setCaseAssignee,
+  updateCaseSla
 } from './caseStore.js'
 
 const LINK_REGEX = /(https?:\/\/|www\.)\S+/i
@@ -844,9 +846,9 @@ export class ModerationEngine {
     return { caseEntry, message }
   }
 
-  async listCasesForGuild(guildId, { status = 'all', category = 'all', limit = 50 } = {}) {
+  async listCasesForGuild(guildId, options = {}) {
     await this.init()
-    return listCases({ guildId, status, category, limit })
+    return listCases({ guildId, ...(options ?? {}) })
   }
 
   async getCase(caseId) {
@@ -874,6 +876,38 @@ export class ModerationEngine {
       actorTag: moderatorTag ?? null,
       actorType: 'moderator',
       note: note ?? null
+    })
+  }
+
+  async setCaseAssignee({
+    guildId,
+    caseId,
+    assigneeId,
+    assigneeTag,
+    assigneeDisplayName,
+    moderatorId,
+    moderatorTag
+  }) {
+    await this.init()
+    return setCaseAssignee({
+      guildId,
+      caseId,
+      assigneeId,
+      assigneeTag,
+      assigneeDisplayName,
+      actorId: moderatorId ? String(moderatorId) : null,
+      actorTag: moderatorTag ?? null
+    })
+  }
+
+  async setCaseSla({ guildId, caseId, dueAt, moderatorId, moderatorTag }) {
+    await this.init()
+    return updateCaseSla({
+      guildId,
+      caseId,
+      dueAt,
+      actorId: moderatorId ? String(moderatorId) : null,
+      actorTag: moderatorTag ?? null
     })
   }
 

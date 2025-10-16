@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
+import { Navigate, Outlet, Route, Routes, useParams } from 'react-router-dom'
 import { AppLayout } from './components/Layout.jsx'
 import OverviewPage from './pages/Overview.jsx'
 import PeoplePage from './pages/People.jsx'
@@ -34,6 +34,14 @@ function GuildGuard() {
   return <Outlet />
 }
 
+function LegacyCaseRedirect() {
+  const { caseId } = useParams()
+  if (!caseId) {
+    return <Navigate to="/cases" replace />
+  }
+  return <Navigate to={`/cases/${caseId}`} replace />
+}
+
 function App() {
   return (
     <Routes>
@@ -45,6 +53,8 @@ function App() {
             <Route index element={<OverviewPage />} />
             <Route path="/people" element={<PeoplePage />} />
             <Route path="/cases" element={<CasesPage />} />
+            <Route path="/cases/:caseId" element={<CasesPage />} />
+            <Route path="/moderation/cases/:caseId" element={<LegacyCaseRedirect />} />
             <Route path="/commands" element={<CommandsPage />} />
             <Route path="/moderation" element={<ModerationPage />} />
             <Route path="/insights" element={<InsightsPage />} />

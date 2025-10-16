@@ -26,13 +26,15 @@ import {
 } from '../people/peopleStore.js';
 import { getUserAccessSummary } from './rbacStore.js';
 import { getDueCheckins } from '../people/checkinScheduler.js';
-import { listAuditEntries, getAuditStats } from '../audit/auditLog.js';
+import { listAuditEntries, getAuditStats, recordAuditEntry } from '../audit/auditLog.js';
 import {
   getEngagementSnapshot,
   getFlowSeries,
   getHeadcountSeries,
   getOverviewKpis
 } from './metricsStore.js';
+import { generatePeopleCsv, generatePeoplePdf } from './peopleExport.js';
+import { generateCaseCsv, generateCasePdf } from './caseExport.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 const legacyPublicDir = path.join(__dirname, 'public');
@@ -434,16 +436,85 @@ export function createDashboard(client, moderation) {
     }
   });
 
-  api.post('/people/import', requirePermission(Permissions.IMPORT_PEOPLE), async (req, res) => {
-    try {
-      const records = Array.isArray(req.body) ? req.body : Array.isArray(req.body?.records) ? req.body.records : [];
-      const result = await upsertPeople(records, buildAuditContext(req));
-      res.json(result);
-    } catch (error) {
-      console.error('Failed to import people:', error);
-      res.status(500).json({ error: error?.message ?? 'Failed to import people.' });
-    }
-  });
+    api.post('/people/import', requirePermission(Permissions.IMPORT_PEOPLE), async (req, res) => {
+      try {
+        const records = Array.isArray(req.body) ? req.body : Array.isArray(req.body?.records) ? req.body.records : [];
+        const result = await upsertPeople(records, buildAuditContext(req));
+        res.json(result);
+      } catch (error) {
+        console.error('Failed to import people:', error);
+        res.status(500).json({ error: error?.message ?? 'Failed to import people.' });
+      }
+    });
+
+    api.get('/people/export', requirePermission(Permissions.VIEW_PEOPLE), async (req, res) => {
+      try {
+        const format = typeof req.query.format === 'string' ? req.query.format.toLowerCase() : 'csv';
+        const filters = {
+          guildId: sanitizeSnowflake(req.query.guildId),
+          status: req.query.status ?? null,
+          department: req.query.department ?? null,
+          tag: req.query.tag ?? null,
+          search: req.query.search ?? null,
+          sortBy: req.query.sortBy ?? 'displayName',
+          direction: req.query.direction ?? 'asc'
+        };
+        const exportLimit = Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : null;
+
+        const people = await collectPeopleForExport(filters, exportLimit);
+        const nameLookup = new Map(people.map((person) => [person.id, person.displayName]));
+        const enriched = people.map((person) => ({
+          ...person,
+          managerName: person.managerId ? nameLookup.get(person.managerId) ?? null : null
+        }));
+
+        const auditContext = buildAuditContext(req);
+        await recordAuditEntry({
+          action: 'people.export',
+          actorId: auditContext.actorId,
+          actorTag: auditContext.actorTag,
+          actorRoles: auditContext.actorRoles,
+          guildId: filters.guildId,
+          targetType: 'people',
+          targetId: null,
+          metadata: {
+            format,
+            filters: {
+              status: filters.status,
+              department: filters.department,
+              tag: filters.tag,
+              search: filters.search
+            },
+            total: enriched.length
+          }
+        });
+
+        if (format === 'pdf') {
+          const pdfBuffer = await generatePeoplePdf(enriched, {
+            title: 'People export',
+            generatedAt: new Date()
+          });
+          res.setHeader('Content-Type', 'application/pdf');
+          res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="people-${filters.guildId ?? 'all'}-${Date.now()}.pdf"`
+          );
+          res.send(pdfBuffer);
+          return;
+        }
+
+        const csv = generatePeopleCsv(enriched);
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="people-${filters.guildId ?? 'all'}-${Date.now()}.csv"`
+        );
+        res.send(csv);
+      } catch (error) {
+        console.error('Failed to export people:', error);
+        res.status(500).json({ error: 'Failed to export people.' });
+      }
+    });
 
   api.post(
     '/people/:personId/actions/announce',
@@ -665,22 +736,43 @@ export function createDashboard(client, moderation) {
     }
   });
 
-  guildRouter.get('/cases', async (req, res) => {
-    if (!moderation) {
-      res.status(503).json({ error: 'Moderation engine not ready.' });
-      return;
-    }
-    try {
-      const status = typeof req.query.status === 'string' ? req.query.status : 'all';
-      const category = typeof req.query.category === 'string' ? req.query.category : 'all';
-      const limit = req.query.limit ? Number(req.query.limit) : 50;
-      const cases = await moderation.listCasesForGuild(req.params.guildId, { status, category, limit });
-      res.json(cases);
-    } catch (error) {
-      console.error('Failed to list cases:', error);
-      res.status(500).json({ error: 'Failed to list cases.' });
-    }
-  });
+    guildRouter.get('/cases', async (req, res) => {
+      if (!moderation) {
+        res.status(503).json({ error: 'Moderation engine not ready.' });
+        return;
+      }
+      try {
+        const status = typeof req.query.status === 'string' ? req.query.status : 'all';
+        const category = typeof req.query.category === 'string' ? req.query.category : 'all';
+        const assignee = typeof req.query.assignee === 'string' ? req.query.assignee : 'all';
+        const search = typeof req.query.search === 'string' ? req.query.search : '';
+        const sla = typeof req.query.sla === 'string' ? req.query.sla : 'all';
+        const limit = Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : 50;
+        const offset = Number.isFinite(Number(req.query.offset)) ? Number(req.query.offset) : 0;
+        const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'updatedAt';
+        const direction = typeof req.query.direction === 'string' ? req.query.direction : 'desc';
+        const includeArchived = req.query.includeArchived !== 'false';
+        const mine = req.query.mine === 'true';
+        const result = await moderation.listCasesForGuild(req.params.guildId, {
+          status,
+          category,
+          assignee,
+          search,
+          sla,
+          limit,
+          offset,
+          sortBy,
+          direction,
+          includeArchived,
+          mine,
+          userId: req.session?.user?.id ?? null
+        });
+        res.json(result);
+      } catch (error) {
+        console.error('Failed to list cases:', error);
+        res.status(500).json({ error: 'Failed to list cases.' });
+      }
+    });
 
   guildRouter.get('/cases/:caseId', async (req, res) => {
     if (!moderation) {
@@ -748,13 +840,62 @@ export function createDashboard(client, moderation) {
       console.error('Failed to update case status:', error);
       res.status(500).json({ error: error?.message ?? 'Failed to update case status.' });
     }
-  });
+    });
 
-  guildRouter.delete('/cases/:caseId', async (req, res) => {
-    if (!moderation) {
-      res.status(503).json({ error: 'Moderation engine not ready.' });
-      return;
-    }
+    guildRouter.post('/cases/:caseId/assignee', async (req, res) => {
+      if (!moderation) {
+        res.status(503).json({ error: 'Moderation engine not ready.' });
+        return;
+      }
+
+      const moderator = req.session?.user;
+
+      try {
+        const updated = await moderation.setCaseAssignee({
+          guildId: req.params.guildId,
+          caseId: req.params.caseId,
+          assigneeId: req.body?.assigneeId ?? req.body?.assignee ?? null,
+          assigneeTag: typeof req.body?.assigneeTag === 'string' ? req.body.assigneeTag : null,
+          assigneeDisplayName:
+            typeof req.body?.assigneeDisplayName === 'string' ? req.body.assigneeDisplayName : null,
+          moderatorId: moderator?.id ?? null,
+          moderatorTag: moderator ? buildUserTag(moderator) : null
+        });
+        res.json(updated);
+      } catch (error) {
+        console.error('Failed to update case assignee:', error);
+        res.status(500).json({ error: error?.message ?? 'Failed to update case assignee.' });
+      }
+    });
+
+    guildRouter.post('/cases/:caseId/sla', async (req, res) => {
+      if (!moderation) {
+        res.status(503).json({ error: 'Moderation engine not ready.' });
+        return;
+      }
+
+      const moderator = req.session?.user;
+
+      try {
+        const updated = await moderation.setCaseSla({
+          guildId: req.params.guildId,
+          caseId: req.params.caseId,
+          dueAt: req.body?.dueAt ?? req.body?.slaDueAt ?? null,
+          moderatorId: moderator?.id ?? null,
+          moderatorTag: moderator ? buildUserTag(moderator) : null
+        });
+        res.json(updated);
+      } catch (error) {
+        console.error('Failed to update case SLA:', error);
+        res.status(500).json({ error: error?.message ?? 'Failed to update case SLA.' });
+      }
+    });
+
+    guildRouter.delete('/cases/:caseId', async (req, res) => {
+      if (!moderation) {
+        res.status(503).json({ error: 'Moderation engine not ready.' });
+        return;
+      }
 
     const moderator = req.session?.user;
 
@@ -874,8 +1015,20 @@ export function createDashboard(client, moderation) {
         }
       };
 
-      const saved = await saveCommandConfig(updated);
-      res.json(saved.commands[commandName]);
+        const saved = await saveCommandConfig(updated);
+        const auditContext = buildAuditContext(req);
+        await recordAuditEntry({
+          action: 'commands.update',
+          actorId: auditContext.actorId,
+          actorTag: auditContext.actorTag,
+          actorRoles: auditContext.actorRoles,
+          guildId: null,
+          targetId: commandName,
+          targetType: 'command',
+          targetLabel: commandName,
+          metadata: saved.commands[commandName] ?? null
+        });
+        res.json(saved.commands[commandName]);
     } catch (error) {
       console.error('Failed to update command configuration:', error);
       res.status(500).json({ error: 'Could not update command configuration.' });
@@ -940,7 +1093,7 @@ export function createDashboard(client, moderation) {
     }
   });
 
-  api.get('/moderation/events', (req, res) => {
+  const streamCaseEvents = (req, res) => {
     if (!moderation) {
       res.status(503).json({ error: 'Moderation engine not ready.' });
       return;
@@ -992,6 +1145,524 @@ export function createDashboard(client, moderation) {
       .catch((error) => {
         console.error('Failed to send initial stats snapshot:', error);
       });
+  };
+
+  api.get('/moderation/events', streamCaseEvents);
+  api.get('/cases/events', streamCaseEvents);
+
+  const resolveCaseContext = async (caseId, guildHint = null) => {
+    const explicitGuildId = sanitizeSnowflake(guildHint);
+    if (explicitGuildId) {
+      const caseEntry = await moderation.getCaseDetails(explicitGuildId, caseId);
+      return { guildId: caseEntry ? caseEntry.guildId : explicitGuildId, caseEntry };
+    }
+    const caseEntry = await moderation.getCase(caseId);
+    return { guildId: caseEntry?.guildId ?? null, caseEntry };
+  };
+
+  api.get('/cases', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      if (!guildId) {
+        res.status(400).json({ error: 'guildId is required.' });
+        return;
+      }
+      const status = typeof req.query.status === 'string' ? req.query.status : 'all';
+      const category = typeof req.query.category === 'string' ? req.query.category : 'all';
+      const assignee = typeof req.query.assignee === 'string' ? req.query.assignee : 'all';
+      const search = typeof req.query.search === 'string' ? req.query.search : '';
+      const sla = typeof req.query.sla === 'string' ? req.query.sla : 'all';
+      const limit = Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : 50;
+      const offset = Number.isFinite(Number(req.query.offset)) ? Number(req.query.offset) : 0;
+      const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'updatedAt';
+      const direction = typeof req.query.direction === 'string' ? req.query.direction : 'desc';
+      const includeArchived = req.query.includeArchived !== 'false';
+      const mine = req.query.mine === 'true';
+
+      const result = await moderation.listCasesForGuild(guildId, {
+        status,
+        category,
+        assignee,
+        search,
+        sla,
+        limit,
+        offset,
+        sortBy,
+        direction,
+        includeArchived,
+        mine,
+        userId: req.session?.user?.id ?? null
+      });
+
+      res.json({ ...result, guildId });
+    } catch (error) {
+      console.error('Failed to load cases:', error);
+      res.status(500).json({ error: 'Failed to load cases.' });
+    }
+  });
+
+  api.get('/cases/export', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const guildId = sanitizeSnowflake(req.query.guildId);
+    if (!guildId) {
+      res.status(400).json({ error: 'guildId is required.' });
+      return;
+    }
+
+    try {
+      const format = typeof req.query.format === 'string' ? req.query.format.toLowerCase() : 'csv';
+      const status = typeof req.query.status === 'string' ? req.query.status : 'all';
+      const category = typeof req.query.category === 'string' ? req.query.category : 'all';
+      const assignee = typeof req.query.assignee === 'string' ? req.query.assignee : 'all';
+      const search = typeof req.query.search === 'string' ? req.query.search : '';
+      const sla = typeof req.query.sla === 'string' ? req.query.sla : 'all';
+      const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'updatedAt';
+      const direction = typeof req.query.direction === 'string' ? req.query.direction : 'desc';
+      const includeArchived = req.query.includeArchived !== 'false';
+      const mine = req.query.mine === 'true';
+      const exportLimit = Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : null;
+
+      const cases = await collectCasesForExport(
+        moderation,
+        guildId,
+        {
+          status,
+          category,
+          assignee,
+          search,
+          sla,
+          sortBy,
+          direction,
+          includeArchived,
+          mine,
+          userId: req.session?.user?.id ?? null
+        },
+        exportLimit
+      );
+
+      const auditContext = buildAuditContext(req);
+      await recordAuditEntry({
+        action: 'cases.export',
+        actorId: auditContext.actorId,
+        actorTag: auditContext.actorTag,
+        actorRoles: auditContext.actorRoles,
+        guildId,
+        targetType: 'case',
+        targetId: null,
+        metadata: {
+          format,
+          filters: { status, category, assignee, search, sla, mine },
+          total: cases.length
+        }
+      });
+
+      if (format === 'pdf') {
+        const pdfBuffer = await generateCasePdf(cases, {
+          title: `Cases export (${guildId})`,
+          generatedAt: new Date()
+        });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="cases-${guildId}-${Date.now()}.pdf"`
+        );
+        res.send(pdfBuffer);
+        return;
+      }
+
+      const csv = generateCaseCsv(cases);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="cases-${guildId}-${Date.now()}.csv"`
+      );
+      res.send(csv);
+    } catch (error) {
+      console.error('Failed to export cases:', error);
+      res.status(500).json({ error: 'Failed to export cases.' });
+    }
+  });
+
+  api.get('/cases/:caseId', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const caseId = String(req.params.caseId ?? '').trim();
+    if (!caseId) {
+      res.status(400).json({ error: 'caseId is required.' });
+      return;
+    }
+    try {
+      const { caseEntry } = await resolveCaseContext(caseId, req.query.guildId);
+      if (!caseEntry) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+      res.json(caseEntry);
+    } catch (error) {
+      console.error('Failed to load case:', error);
+      res.status(500).json({ error: 'Failed to load case.' });
+    }
+  });
+
+  api.post('/cases/:caseId/messages', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const caseId = String(req.params.caseId ?? '').trim();
+    if (!caseId) {
+      res.status(400).json({ error: 'caseId is required.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const { guildId, caseEntry } = await resolveCaseContext(
+        caseId,
+        req.query.guildId ?? req.body?.guildId
+      );
+      if (!caseEntry || !guildId) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      const body =
+        typeof req.body?.body === 'string'
+          ? req.body.body
+          : typeof req.body?.content === 'string'
+            ? req.body.content
+            : '';
+
+      const message = await moderation.postModeratorMessage({
+        guildId,
+        caseId,
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null,
+        body
+      });
+      const updatedCase = await moderation.getCaseDetails(guildId, caseId);
+      res.json({ message, case: updatedCase ?? caseEntry });
+    } catch (error) {
+      console.error('Failed to post moderator message:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to send message.' });
+    }
+  });
+
+  api.post('/cases/:caseId/status', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const caseId = String(req.params.caseId ?? '').trim();
+    if (!caseId) {
+      res.status(400).json({ error: 'caseId is required.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const { guildId, caseEntry } = await resolveCaseContext(
+        caseId,
+        req.query.guildId ?? req.body?.guildId
+      );
+      if (!caseEntry || !guildId) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      const status = typeof req.body?.status === 'string' ? req.body.status : null;
+      if (!status) {
+        res.status(400).json({ error: 'status is required.' });
+        return;
+      }
+
+      const updated = await moderation.setCaseStatus({
+        guildId,
+        caseId,
+        status,
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null,
+        note: typeof req.body?.note === 'string' ? req.body.note : null
+      });
+      res.json(updated);
+    } catch (error) {
+      console.error('Failed to update case status:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to update case status.' });
+    }
+  });
+
+  api.post('/cases/:caseId/assignee', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const caseId = String(req.params.caseId ?? '').trim();
+    if (!caseId) {
+      res.status(400).json({ error: 'caseId is required.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const { guildId, caseEntry } = await resolveCaseContext(
+        caseId,
+        req.query.guildId ?? req.body?.guildId
+      );
+      if (!caseEntry || !guildId) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      const updated = await moderation.setCaseAssignee({
+        guildId,
+        caseId,
+        assigneeId: req.body?.assigneeId ?? req.body?.assignee ?? null,
+        assigneeTag: typeof req.body?.assigneeTag === 'string' ? req.body.assigneeTag : null,
+        assigneeDisplayName:
+          typeof req.body?.assigneeDisplayName === 'string' ? req.body.assigneeDisplayName : null,
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null
+      });
+      res.json(updated);
+    } catch (error) {
+      console.error('Failed to update case assignee:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to update case assignee.' });
+    }
+  });
+
+  api.post('/cases/:caseId/sla', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const caseId = String(req.params.caseId ?? '').trim();
+    if (!caseId) {
+      res.status(400).json({ error: 'caseId is required.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const { guildId, caseEntry } = await resolveCaseContext(
+        caseId,
+        req.query.guildId ?? req.body?.guildId
+      );
+      if (!caseEntry || !guildId) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      const updated = await moderation.setCaseSla({
+        guildId,
+        caseId,
+        dueAt:
+          typeof req.body?.dueAt === 'string'
+            ? req.body.dueAt
+            : typeof req.body?.slaDueAt === 'string'
+              ? req.body.slaDueAt
+              : null,
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null
+      });
+      res.json(updated);
+    } catch (error) {
+      console.error('Failed to update case SLA:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to update case SLA.' });
+    }
+  });
+
+  api.delete('/cases/:caseId', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const caseId = String(req.params.caseId ?? '').trim();
+    if (!caseId) {
+      res.status(400).json({ error: 'caseId is required.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const { guildId, caseEntry } = await resolveCaseContext(
+        caseId,
+        req.query.guildId ?? req.body?.guildId
+      );
+      if (!caseEntry || !guildId) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      await moderation.deleteCase({
+        guildId,
+        caseId,
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null
+      });
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Failed to delete case:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to delete case.' });
+    }
+  });
+
+  api.post('/cases', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const guildId = sanitizeSnowflake(req.body?.guildId ?? req.body?.guild);
+    if (!guildId) {
+      res.status(400).json({ error: 'guildId is required.' });
+      return;
+    }
+
+    try {
+      const guild = await resolveGuild(client, guildId);
+      if (!guild) {
+        res.status(404).json({ error: 'Guild not found.' });
+        return;
+      }
+
+      const userId = sanitizeSnowflake(req.body?.userId ?? req.body?.user);
+      if (!userId) {
+        res.status(400).json({ error: 'userId is required.' });
+        return;
+      }
+
+      const member = await guild.members.fetch(userId).catch(() => null);
+      if (!member) {
+        res.status(404).json({ error: 'Member not found in this guild.' });
+        return;
+      }
+
+      const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : null;
+      const message = typeof req.body?.message === 'string' ? req.body.message.trim() : null;
+
+      const caseEntry = await moderation.openMemberCase({
+        guild,
+        member,
+        reason,
+        initialMessage: message
+      });
+
+      res.json(caseEntry);
+    } catch (error) {
+      console.error('Failed to create manual case:', error);
+      res.status(500).json({ error: 'Failed to create case.' });
+    }
+  });
+
+  api.post('/quick-actions', async (req, res) => {
+    const action = typeof req.body?.action === 'string' ? req.body.action.toLowerCase() : null;
+    if (!action) {
+      res.status(400).json({ error: 'action is required.' });
+      return;
+    }
+
+    const guildId = sanitizeSnowflake(req.body?.guildId);
+    const period = typeof req.body?.period === 'string' ? req.body.period : '30d';
+    const now = new Date();
+    const auditContext = buildAuditContext(req);
+
+    try {
+      let payload;
+
+      if (action === 'daily-summary') {
+        const metrics = await getOverviewKpis({
+          guildId,
+          period,
+          date: now,
+          moderation,
+          clientReady: client.isReady()
+        });
+        payload = {
+          message: [
+            `Active members: ${metrics.active} (${formatSignedDelta(metrics.activeDelta)})`,
+            `Net flow: ${formatSignedDelta((metrics.entriesMonth ?? 0) - (metrics.exitsMonth ?? 0))}`,
+            `Open cases: ${metrics.openCases} (${formatSignedDelta(metrics.openCasesDelta)})`,
+            `Engagement per day: ${metrics.engagementPerDay} (${formatSignedDelta(metrics.engagementDelta)})`
+          ].join(' | ')
+        };
+      } else if (action === 'onboarding-followup') {
+        const roster = await listPeople({
+          guildId,
+          status: 'onboarding',
+          limit: 10,
+          offset: 0
+        });
+        const results = Array.isArray(roster?.results) ? roster.results : [];
+        const names = results.slice(0, 5).map((entry) => entry.displayName).join(', ');
+        payload = {
+          message: results.length
+            ? `${results.length} onboarding members need follow-up${names ? `: ${names}` : ''}.`
+            : 'No onboarding members need follow-up right now.'
+        };
+      } else if (action === 'case-health') {
+        if (!guildId) {
+          res.status(400).json({ error: 'guildId is required for this quick action.' });
+          return;
+        }
+        if (!moderation) {
+          throw new Error('Moderation engine not ready.');
+        }
+        const response = await moderation.listCasesForGuild(guildId, {
+          status: 'active',
+          limit: 25,
+          includeArchived: false,
+          userId: req.session?.user?.id ?? null
+        });
+        const items = Array.isArray(response?.items)
+          ? response.items
+          : Array.isArray(response)
+            ? response
+            : [];
+        const escalated = items.filter((entry) => String(entry.status ?? '').toLowerCase() === 'escalated');
+        const overdue = items.filter((entry) => evaluateSlaState(entry.sla, entry.status) === 'overdue');
+        payload = {
+          message: items.length
+            ? `${items.length} active cases (${escalated.length} escalated, ${overdue.length} SLA overdue).`
+            : 'No active cases on queue.'
+        };
+      } else {
+        res.status(400).json({ error: 'Unsupported quick action.' });
+        return;
+      }
+
+      await recordAuditEntry({
+        action: `quick.${action}`,
+        actorId: auditContext.actorId,
+        actorTag: auditContext.actorTag,
+        actorRoles: auditContext.actorRoles,
+        guildId,
+        targetType: 'quick-action',
+        targetId: action,
+        metadata: {
+          period,
+          guildId,
+          result: payload.message ?? null
+        }
+      });
+
+      res.json({ success: true, ...payload });
+    } catch (error) {
+      console.error(`Failed to run quick action (${action}):`, error);
+      res.status(500).json({ error: error?.message ?? 'Quick action failed.' });
+    }
   });
 
   api.get('/moderation/cases', async (req, res) => {
@@ -1005,8 +1676,9 @@ export function createDashboard(client, moderation) {
       const status = typeof req.query.status === 'string' ? req.query.status : 'all';
       const category = typeof req.query.category === 'string' ? req.query.category : 'all';
       if (guildId) {
-        const cases = await moderation.listCasesForGuild(guildId, { status, category, limit });
-        res.json(cases);
+        const result = await moderation.listCasesForGuild(guildId, { status, category, limit });
+        const items = Array.isArray(result?.items) ? result.items : Array.isArray(result) ? result : [];
+        res.json(items);
       } else {
         const cases = await moderation.getRecentCases(limit);
         res.json(cases);
@@ -1239,6 +1911,73 @@ export function createDashboard(client, moderation) {
   return app;
 }
 
+async function collectPeopleForExport(filters = {}, limit = null) {
+  const pageSize = 250;
+  const collected = [];
+  let offset = 0;
+
+  while (true) {
+    const page = await listPeople({ ...filters, limit: pageSize, offset });
+    const results = Array.isArray(page?.results) ? page.results : [];
+    if (!results.length) {
+      break;
+    }
+    for (const person of results) {
+      collected.push(person);
+      if (limit && collected.length >= limit) {
+        return collected.slice(0, limit);
+      }
+    }
+    offset += results.length;
+    const total = page?.total ?? collected.length;
+    if (collected.length >= total) {
+      break;
+    }
+    if (results.length < pageSize) {
+      break;
+    }
+  }
+
+  return limit ? collected.slice(0, limit) : collected;
+}
+
+async function collectCasesForExport(moderation, guildId, options = {}, limit = null) {
+  if (!guildId) {
+    return [];
+  }
+  const pageSize = Math.min(Number(options.limit) || 200, 200);
+  const collected = [];
+  let offset = 0;
+
+  while (true) {
+    const result = await moderation.listCasesForGuild(guildId, {
+      ...options,
+      limit: pageSize,
+      offset
+    });
+    const items = Array.isArray(result?.items) ? result.items : [];
+    if (!items.length) {
+      break;
+    }
+    for (const entry of items) {
+      collected.push(entry);
+      if (limit && collected.length >= limit) {
+        return collected.slice(0, limit);
+      }
+    }
+    offset += items.length;
+    const total = result?.total ?? collected.length;
+    if (collected.length >= total) {
+      break;
+    }
+    if (items.length < pageSize) {
+      break;
+    }
+  }
+
+  return limit ? collected.slice(0, limit) : collected;
+}
+
 function parseMetricsDate(value) {
   if (typeof value === 'string' && value.trim()) {
     const parsed = new Date(value);
@@ -1247,6 +1986,40 @@ function parseMetricsDate(value) {
     }
   }
   return new Date();
+}
+
+function formatSignedDelta(value) {
+  const number = Number(value) || 0;
+  if (number === 0) {
+    return '0';
+  }
+  return number > 0 ? `+${number}` : String(number);
+}
+
+function evaluateSlaState(sla, status) {
+  if (!sla || !sla.dueAt) {
+    return 'none';
+  }
+  if (sla.completedAt) {
+    return 'met';
+  }
+  const normalizedStatus = typeof status === 'string' ? status.toLowerCase() : null;
+  if (normalizedStatus === 'closed' || normalizedStatus === 'archived') {
+    return 'met';
+  }
+  const due = Date.parse(sla.dueAt);
+  if (!Number.isFinite(due)) {
+    return 'none';
+  }
+  const now = Date.now();
+  if (due < now) {
+    return 'overdue';
+  }
+  const hours = (due - now) / (1000 * 60 * 60);
+  if (hours <= 24) {
+    return 'due-soon';
+  }
+  return 'pending';
 }
 
 function buildAuditContext(req) {
