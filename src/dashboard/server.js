@@ -22,9 +22,11 @@ import {
   offboardPerson,
   listCheckinsForPerson,
   recordCheckin,
-  getPeopleSummary
+  getPeopleSummary,
+  scheduleCheckin,
+  getOnboardingChecklist,
+  getPerson
 } from '../people/peopleStore.js';
-import { getUserAccessSummary } from './rbacStore.js';
 import { getDueCheckins } from '../people/checkinScheduler.js';
 import { listAuditEntries, getAuditStats, recordAuditEntry } from '../audit/auditLog.js';
 import {
@@ -33,12 +35,53 @@ import {
   getHeadcountSeries,
   getOverviewKpis
 } from './metricsStore.js';
+import { startAlertsEngine, listGuildAlerts, resolveAlertById, listActiveAlerts, evaluateAlertsForGuild } from './alertsService.js';
+import {
+  buildOverviewSummary,
+  buildHeadcountSeries as buildHeadcountSeriesData,
+  buildFlowSeries as buildFlowSeriesData,
+  buildEngagementSnapshot as buildEngagementSnapshotData,
+  buildAlerts as buildAlertsData,
+  buildPeopleCounters,
+  loadPeople,
+  loadCases
+} from './analytics/overviewMetrics.js';
+import { buildOverviewSnapshot } from './overviewService.js';
+import { resolveDashboardAccess } from './accessResolver.js';
+import { callDreamGen } from '../chat/providers/dreamgen.js';
+import { recordModerationAction } from '../moderation/moderationActionsStore.js';
+import { getGuildAssignments, setGuildAssignments } from '../ops/rbacAssignmentsStore.js';
+import { getVerificationConfig, setVerificationConfig } from '../ops/verificationConfigStore.js';
+import { listVerifications, updateVerificationState } from '../ops/verificationStore.js';
+import { listModerationActions } from '../moderation/moderationActionsStore.js';
+import {
+  getTelemetrySettings,
+  setTelemetryEnabled,
+  getCommandTelemetry
+} from './telemetryStore.js';
 import { generatePeopleCsv, generatePeoplePdf } from './peopleExport.js';
 import { generateCaseCsv, generateCasePdf } from './caseExport.js';
 
 const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
-const legacyPublicDir = path.join(__dirname, 'public');
 const clientDistDir = path.join(__dirname, 'client', 'dist');
+let clientBuildVerified = false;
+
+function ensureClientBuild() {
+  if (clientBuildVerified) {
+    return;
+  }
+  if (!fs.existsSync(clientDistDir)) {
+    const message = [
+      'Dashboard client build not found.',
+      `Expected bundle at ${clientDistDir}.`,
+      'Run `npm run dashboard:build` to generate the latest assets before starting the server.'
+    ].join(' ');
+    const error = new Error(message);
+    error.code = 'DASHBOARD_CLIENT_BUILD_MISSING';
+    throw error;
+  }
+  clientBuildVerified = true;
+}
 
 function resolveRedirectUri() {
   const explicit = process.env.DASHBOARD_REDIRECT_URI;
@@ -91,6 +134,7 @@ function inferCategory(name) {
 }
 
 export function createDashboard(client, moderation) {
+  ensureClientBuild();
   const app = express();
 
   app.use(cors());
@@ -123,8 +167,18 @@ export function createDashboard(client, moderation) {
         : user.username);
 
     try {
-      const access = await getUserAccessSummary(user.id);
+      const requestedGuildId =
+        sanitizeSnowflake(req.query.guild_id ?? req.query.guildId) ??
+        req.session?.dashboardGuildId ??
+        process.env.GUILD_ID ??
+        null;
+      const access = await resolveDashboardAccess({
+        client,
+        userId: user.id,
+        guildId: requestedGuildId
+      });
       req.session.dashboardRoles = access.roles;
+      req.session.dashboardGuildId = access.guildId ?? requestedGuildId ?? null;
       res.json({
         authenticated: true,
         oauthEnabled,
@@ -136,7 +190,8 @@ export function createDashboard(client, moderation) {
           avatar: user.avatar,
           displayName,
           roles: access.roles,
-          permissions: Array.from(access.permissions ?? [])
+          permissions: Array.from(access.permissions ?? []),
+          guildId: access.guildId ?? null
         }
       });
     } catch (error) {
@@ -289,15 +344,26 @@ export function createDashboard(client, moderation) {
   const attachRbac = async (req, _res, next) => {
     const user = req.session?.user;
     if (!user) {
-      req.rbac = { userId: null, roles: [], permissions: new Set() };
+      req.rbac = { userId: null, roles: [], permissions: new Set(), guildId: null };
       next();
       return;
     }
 
     try {
-      const access = await getUserAccessSummary(user.id);
+      const requestedGuildId =
+        sanitizeSnowflake(req.query.guild_id ?? req.query.guildId) ??
+        sanitizeSnowflake(req.body?.guildId) ??
+        req.session?.dashboardGuildId ??
+        process.env.GUILD_ID ??
+        null;
+      const access = await resolveDashboardAccess({
+        client,
+        userId: user.id,
+        guildId: requestedGuildId
+      });
       req.rbac = {
         userId: user.id,
+        guildId: access.guildId ?? requestedGuildId ?? null,
         roles: access.roles ?? [],
         permissions:
           access.permissions instanceof Set
@@ -305,14 +371,218 @@ export function createDashboard(client, moderation) {
             : new Set(access.permissions ?? [])
       };
       req.session.dashboardRoles = access.roles ?? [];
+      req.session.dashboardGuildId = access.guildId ?? requestedGuildId ?? null;
     } catch (error) {
       console.error('Failed to load RBAC context for dashboard request:', error);
-      req.rbac = { userId: user.id, roles: [], permissions: new Set() };
+      req.rbac = { userId: user.id, guildId: null, roles: [], permissions: new Set() };
     }
     next();
   };
 
   const api = express.Router();
+  const internal = express.Router();
+
+  startAlertsEngine(client);
+
+  api.get(
+    '/overview',
+    requirePermission(Permissions.VIEW_OVERVIEW),
+    async (req, res) => {
+      try {
+        const guildId = sanitizeSnowflake(req.query.guild_id ?? req.query.guildId);
+        const from =
+          typeof req.query.from === 'string' && req.query.from.trim().length
+            ? req.query.from
+            : null;
+        const to =
+          typeof req.query.to === 'string' && req.query.to.trim().length
+            ? req.query.to
+            : null;
+        const snapshot = await buildOverviewSnapshot({ guildId, from, to });
+        res.json(snapshot);
+      } catch (error) {
+        console.error('Failed to load overview snapshot:', error);
+        res.status(500).json({ error: 'Failed to load overview snapshot.' });
+      }
+    }
+  );
+
+  api.get('/overview/summary', async (req, res) => {
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      const date = parseMetricsDate(req.query.date);
+
+      const [people, cases] = await Promise.all([loadPeople({ guildId }), loadCases({ guildId })]);
+
+      let fallbackMemberCount = null;
+      if ((!people || people.length === 0) && guildId) {
+        const guild = await resolveGuild(client, guildId);
+        fallbackMemberCount = guild?.memberCount ?? null;
+      }
+
+      const payload = await buildOverviewSummary({
+        guildId,
+        date,
+        people,
+        cases
+      });
+
+      if (fallbackMemberCount !== null && !payload.active_members) {
+        payload.active_members = fallbackMemberCount;
+      }
+      res.json(payload);
+    } catch (error) {
+      console.error('Failed to load overview summary:', error);
+      res.status(500).json({ error: 'Failed to load overview summary.' });
+    }
+  });
+
+  api.get('/overview/headcount', async (req, res) => {
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      const date = parseMetricsDate(req.query.date);
+      const range =
+        typeof req.query.range === 'string' && req.query.range.trim().length
+          ? req.query.range
+          : 'last_6_months';
+
+      const people = await loadPeople({ guildId });
+      const months = range === 'last_12_months' ? 12 : 6;
+
+      const payload = await buildHeadcountSeriesData({ guildId, months, date, people });
+      res.json(payload);
+    } catch (error) {
+      console.error('Failed to load headcount overview:', error);
+      res.status(500).json({ error: 'Failed to load headcount overview.' });
+    }
+  });
+
+  api.get('/overview/flow', async (req, res) => {
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      const date = parseMetricsDate(req.query.date);
+
+      const range =
+        typeof req.query.range === 'string' && req.query.range.trim().length
+          ? req.query.range
+          : 'last_6_months';
+      const months = range === 'last_12_months' ? 12 : 6;
+      const people = await loadPeople({ guildId });
+      const payload = await buildFlowSeriesData({ guildId, months, date, people });
+      res.json(payload);
+    } catch (error) {
+      console.error('Failed to load flow overview:', error);
+      res.status(500).json({ error: 'Failed to load membership flow overview.' });
+    }
+  });
+
+  api.get('/overview/engagement', async (req, res) => {
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      const range =
+        typeof req.query.range === 'string' && req.query.range.trim().length
+          ? req.query.range
+          : 'last_30_days';
+      const payload = await buildEngagementSnapshotData({ guildId, range });
+      res.json(payload);
+    } catch (error) {
+      console.error('Failed to load engagement overview:', error);
+      res.status(500).json({ error: 'Failed to load engagement overview.' });
+    }
+  });
+
+  api.get('/overview/alerts', async (req, res) => {
+    try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
+      const date = parseMetricsDate(req.query.date);
+
+      const [people, cases] = await Promise.all([
+        loadPeople({ guildId }),
+        loadCases({ guildId })
+      ]);
+
+      const alerts = await buildAlertsData({ guildId, date, people, cases });
+      res.json(Array.isArray(alerts) ? alerts : []);
+    } catch (error) {
+      console.error('Failed to load overview alerts:', error);
+      res.status(500).json({ error: 'Failed to load overview alerts.' });
+    }
+  });
+
+  internal.post('/dreamgen/send', async (req, res) => {
+    try {
+      const channelId = sanitizeSnowflake(req.body?.channel ?? req.body?.channelId);
+      const userId = sanitizeSnowflake(req.body?.user ?? req.body?.userId);
+      const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+      const tags = Array.isArray(req.body?.tags)
+        ? req.body.tags.filter((tag) => typeof tag === 'string')
+        : [];
+
+      const delivery = await deliverDreamGenMessage(client, { channelId, userId, text });
+      res.json({
+        success: true,
+        target: delivery.target,
+        tags,
+        messageId: delivery.messageId ?? null
+      });
+    } catch (error) {
+      if (error?.statusCode) {
+        res.status(error.statusCode).json({ error: error.message });
+        return;
+      }
+      console.error('DreamGen send failed:', error);
+      res.status(500).json({ error: 'Failed to deliver DreamGen message.' });
+    }
+  });
+
+  internal.post('/dreamgen/summary', async (req, res) => {
+    const kind = typeof req.body?.kind === 'string' ? req.body.kind.trim() : '';
+    const inputs =
+      req.body?.inputs && typeof req.body.inputs === 'object' && req.body.inputs !== null
+        ? req.body.inputs
+        : {};
+
+    if (!kind) {
+      res.status(400).json({ error: 'kind is required.' });
+      return;
+    }
+
+    if (kind !== 'daily_overview') {
+      res.status(400).json({ error: 'Unsupported summary kind.' });
+      return;
+    }
+
+    try {
+      const guildHint =
+        inputs.guildId ?? inputs.guild ?? req.body?.guildId ?? req.query?.guildId ?? null;
+      const guildId = sanitizeSnowflake(guildHint);
+      const date = parseMetricsDate(inputs.date ?? req.body?.date);
+
+      let memberCount = null;
+      if (guildId) {
+        const guild = await resolveGuild(client, guildId);
+        memberCount = guild?.memberCount ?? null;
+      }
+
+      const summaryResult = await generateDailyOverviewSummary({
+        client,
+        moderation,
+        guildId,
+        date,
+        inputs,
+        memberCount
+      });
+
+      res.json({ text: summaryResult.text, payload: summaryResult.payload });
+    } catch (error) {
+      if (error?.message?.startsWith('DreamGen')) {
+        res.status(503).json({ error: error.message });
+        return;
+      }
+      console.error('DreamGen summary failed:', error);
+      res.status(500).json({ error: 'Failed to generate DreamGen summary.' });
+    }
+  });
 
   api.get('/metrics/kpis', async (req, res) => {
     try {
@@ -409,10 +679,362 @@ export function createDashboard(client, moderation) {
         sortBy: req.query.sortBy,
         direction: req.query.direction
       });
-      res.json(result);
+      const counters =
+        (await buildPeopleCounters().catch(() => null)) ?? {
+          total: result.total ?? 0,
+          active: 0,
+          onboarding: 0,
+          offboarded: 0
+        };
+      res.json({ ...result, counters });
     } catch (error) {
       console.error('Failed to list people:', error);
       res.status(500).json({ error: 'Failed to load roster.' });
+    }
+  });
+
+  api.get('/people/checkins/upcoming', requirePermission(Permissions.VIEW_PEOPLE), async (req, res) => {
+    try {
+      const horizonDays = Number.isFinite(Number(req.query.days)) ? Number(req.query.days) : 90;
+      const includeMissed = req.query.includeMissed === 'true';
+      const withinHours = Math.max(1, horizonDays) * 24;
+      const due = await getDueCheckins({ withinHours, includeMissed });
+      const allowedCadences = new Set(['7d', '30d', '90d']);
+      const items = due
+        .filter(
+          (entry) =>
+            entry?.person &&
+            entry?.checkin &&
+            allowedCadences.has(String(entry.checkin.cadence ?? '').toLowerCase()) &&
+            entry.checkin.dueAt
+        )
+        .map((entry) => ({
+          person_id: entry.person.id,
+          name: entry.person.displayName,
+          due_at: entry.checkin.dueAt,
+          type: entry.checkin.cadence,
+          status: entry.checkin.status ?? 'pending',
+          department: entry.person.department ?? null
+        }))
+        .sort((a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime());
+      res.json(items);
+    } catch (error) {
+      console.error('Failed to load upcoming check-ins:', error);
+      res.status(500).json({ error: 'Failed to load upcoming check-ins.' });
+    }
+  });
+
+  api.get('/people/onboarding/checklist', requirePermission(Permissions.VIEW_PEOPLE), async (req, res) => {
+    try {
+      const departmentFilter =
+        typeof req.query.department === 'string' && req.query.department.trim().length
+          ? req.query.department.trim().toLowerCase()
+          : null;
+      const checklist = await getOnboardingChecklist();
+      const filtered = departmentFilter
+        ? checklist.filter(
+            (entry) =>
+              (entry.department ?? '').toLowerCase() === departmentFilter ||
+              entry.checklist.some(
+                (item) => (item.notes ?? '').toLowerCase().includes(departmentFilter)
+              )
+          )
+        : checklist;
+      res.json(filtered);
+    } catch (error) {
+      console.error('Failed to load onboarding checklist:', error);
+      res.status(500).json({ error: 'Failed to load onboarding checklist.' });
+    }
+  });
+
+  api.post('/people/:personId/actions', requirePermission(Permissions.MANAGE_PEOPLE), async (req, res) => {
+    const personId = req.params.personId;
+    const action = typeof req.body?.action === 'string' ? req.body.action.trim().toLowerCase() : null;
+    if (!action) {
+      res.status(400).json({ error: 'action is required.' });
+      return;
+    }
+
+    const auditContext = buildAuditContext(req);
+
+    try {
+      const person = await getPerson(personId);
+      if (!person) {
+        res.status(404).json({ error: 'Person not found.' });
+        return;
+      }
+
+      const resolvedGuildId =
+        sanitizeSnowflake(req.body?.guildId) ??
+        sanitizeSnowflake(person.guildId) ??
+        sanitizeSnowflake(req.query.guildId);
+      const resolvedMemberId = sanitizeSnowflake(
+        req.body?.memberId ?? person.discordId ?? person.externalId ?? person.id
+      );
+
+      let payload = null;
+      let toast = null;
+      let updatedPerson = null;
+
+      if (['warn', 'timeout', 'kick', 'ban', 'note', 'dm'].includes(action)) {
+        if (!resolvedGuildId || !resolvedMemberId) {
+          res.status(400).json({ error: 'guildId and memberId are required for moderation actions.' });
+          return;
+        }
+        if (!client.comm) {
+          res.status(503).json({ error: 'Messaging adapter not ready.' });
+          return;
+        }
+        const dmUser = req.body?.dmUser !== undefined ? Boolean(req.body.dmUser) : true;
+        const reason =
+          typeof req.body?.reason === 'string' && req.body.reason.trim().length ? req.body.reason.trim() : null;
+        const evidenceUrl =
+          typeof req.body?.evidenceUrl === 'string' && req.body.evidenceUrl.trim().length
+            ? req.body.evidenceUrl.trim()
+            : null;
+        const durationSec = Number.isFinite(Number(req.body?.durationSec)) ? Number(req.body.durationSec) : null;
+        const deleteMessageDays = Number.isFinite(Number(req.body?.deleteMessageDays))
+          ? Number(req.body.deleteMessageDays)
+          : 0;
+        const dmMessage =
+          typeof req.body?.message === 'string' && req.body.message.trim().length
+            ? req.body.message.trim()
+            : reason
+              ? `You have received a ${action.toUpperCase()} from the staff. Reason: ${reason}`
+              : `You have received a ${action.toUpperCase()} from the staff.`;
+
+        const moderationAction = await recordModerationAction({
+          guildId: resolvedGuildId,
+          memberId: resolvedMemberId,
+          action,
+          reason,
+          actor_id: auditContext.actorId,
+          actor_tag: auditContext.actorTag,
+          duration_sec: durationSec,
+          evidence_url: evidenceUrl,
+          dm_user: dmUser
+        });
+
+        if (dmUser) {
+          try {
+            await client.comm.dm(resolvedMemberId, dmMessage);
+          } catch (error) {
+            console.error('Failed to DM member:', error);
+          }
+        }
+
+        if (action === 'timeout' && durationSec) {
+          await client.comm.timeout(resolvedMemberId, durationSec, reason ?? undefined, resolvedGuildId).catch((error) => {
+            console.error('Failed to timeout member:', error);
+          });
+        } else if (action === 'kick') {
+          await client.comm.kick(resolvedMemberId, reason ?? undefined, resolvedGuildId).catch((error) => {
+            console.error('Failed to kick member:', error);
+          });
+        } else if (action === 'ban') {
+          await client.comm
+            .ban(resolvedMemberId, deleteMessageDays, reason ?? undefined, resolvedGuildId)
+            .catch((error) => {
+              console.error('Failed to ban member:', error);
+            });
+        }
+
+        await recordAuditEntry({
+          action: `people.moderation.${action}`,
+          actorId: auditContext.actorId ?? null,
+          actorTag: auditContext.actorTag ?? null,
+          actorRoles: auditContext.actorRoles ?? [],
+          guildId: resolvedGuildId,
+          targetId: personId,
+          targetType: 'person',
+          targetLabel: person.displayName,
+          metadata: {
+            memberId: resolvedMemberId,
+            reason,
+            durationSec,
+            evidenceUrl,
+            dmUser,
+            deleteMessageDays
+          }
+        });
+
+        res.json({
+          success: true,
+          action,
+          person,
+          data: { moderationActionId: moderationAction.id ?? null, caseId: null },
+          counters: null,
+          toast: `Action ${action} recorded.`
+        });
+        return;
+      } else if (action === 'schedule_checkin') {
+        const type = typeof req.body?.type === 'string' ? req.body.type : 'custom';
+        const dueAt = req.body?.due_at ?? req.body?.dueAt ?? null;
+        const notes = typeof req.body?.notes === 'string' ? req.body.notes : null;
+        updatedPerson = await scheduleCheckin(personId, type, {
+          dueAt,
+          notes,
+          actorId: auditContext.actorId,
+          actorTag: auditContext.actorTag
+        });
+        payload = updatedPerson;
+        toast = 'Check-in scheduled.';
+      } else if (action === 'assign_department') {
+        const department =
+          typeof req.body?.department === 'string' && req.body.department.trim().length
+            ? req.body.department.trim()
+            : null;
+        updatedPerson = await updatePerson(
+          personId,
+          { department },
+          { ...auditContext, action: 'people.department.assign' }
+        );
+        payload = updatedPerson;
+        toast = 'Department updated.';
+      } else if (action === 'open_case') {
+        if (!moderation) {
+          res.status(503).json({ error: 'Moderation engine not ready.' });
+          return;
+        }
+        if (!resolvedGuildId) {
+          res.status(400).json({ error: 'guildId is required to open a case.' });
+          return;
+        }
+        const guild = await resolveGuild(client, resolvedGuildId);
+        if (!guild) {
+          res.status(404).json({ error: 'Guild not found.' });
+          return;
+        }
+        if (!resolvedMemberId) {
+          res.status(400).json({ error: 'memberId is required to open a case.' });
+          return;
+        }
+        const member = await guild.members.fetch(resolvedMemberId).catch(() => null);
+        if (!member) {
+          res.status(404).json({ error: 'Member not found in this guild.' });
+          return;
+        }
+        const reason = typeof req.body?.title === 'string' ? req.body.title : req.body?.notes ?? null;
+        const notes = typeof req.body?.notes === 'string' ? req.body.notes : null;
+        const caseEntry = await moderation.openMemberCase({
+          guild,
+          member,
+          reason,
+          initialMessage: notes
+        });
+        payload = { case: caseEntry };
+        toast = 'Case opened for this person.';
+      } else if (action === 'set_status') {
+        const status =
+          typeof req.body?.status === 'string' && req.body.status.trim().length
+            ? req.body.status.trim().toLowerCase()
+            : null;
+        if (!status) {
+          res.status(400).json({ error: 'status is required.' });
+          return;
+        }
+        updatedPerson = await updatePerson(
+          personId,
+          { status },
+          { ...auditContext, action: 'people.status.set' }
+        );
+        payload = updatedPerson;
+        toast = 'Status updated.';
+      } else if (action === 'dm') {
+        const text = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+        if (!text) {
+          res.status(400).json({ error: 'message is required for DM action.' });
+          return;
+        }
+        const channelId = sanitizeSnowflake(req.body?.channel ?? req.body?.channelId);
+        const userId = sanitizeSnowflake(req.body?.user ?? req.body?.userId);
+        const delivery = await deliverDreamGenMessage(client, { channelId, userId, text });
+        await recordAuditEntry({
+          action: 'people.dm',
+          actorId: auditContext.actorId ?? null,
+          actorTag: auditContext.actorTag ?? null,
+          actorRoles: auditContext.actorRoles ?? [],
+          guildId: delivery.guildId ?? null,
+          targetId: personId,
+          targetType: 'person',
+          targetLabel: delivery.target?.tag ?? delivery.target?.name ?? null,
+          metadata: {
+            text,
+            channelId: delivery.target?.id ?? null,
+            delivery
+          }
+        });
+        payload = delivery;
+        toast = 'Message sent via DreamGen.';
+      } else {
+        res.status(400).json({ error: 'Unsupported action.' });
+        return;
+      }
+
+      if (!updatedPerson) {
+        updatedPerson = await getPerson(personId).catch(() => null);
+      }
+
+      const counters = await getPeopleSummary().catch(() => null);
+      res.json({
+        success: true,
+        action,
+        person: updatedPerson,
+        data: payload,
+        counters: counters
+          ? {
+              total: counters.total ?? 0,
+              active: counters.active ?? 0,
+              onboarding: counters.onboarding ?? 0,
+              offboarded: counters.offboarded ?? 0
+            }
+          : null,
+        toast
+      });
+    } catch (error) {
+      if (error?.statusCode) {
+        res.status(error.statusCode).json({ error: error.message });
+        return;
+      }
+      console.error('Failed to execute people action:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to execute action.' });
+    }
+  });
+
+  api.get('/people/:personId/actions/log', requirePermission(Permissions.VIEW_PEOPLE), async (req, res) => {
+    try {
+      const person = await getPerson(req.params.personId);
+      if (!person) {
+        res.status(404).json({ error: 'Person not found.' });
+        return;
+      }
+      const guildId = sanitizeSnowflake(req.query.guildId ?? req.query.guild_id ?? person.guildId);
+      const memberId = sanitizeSnowflake(
+        req.query.memberId ?? req.query.member_id ?? person.discordId ?? person.externalId ?? person.id
+      );
+      if (!guildId || !memberId) {
+        res.json([]);
+        return;
+      }
+      const history = await listModerationActions({ guildId, memberId });
+      res.json(
+        history.map((entry) => ({
+          id: entry.id,
+          action: entry.action,
+          reason: entry.reason ?? null,
+          actorId: entry.actorId ?? null,
+          actorTag: entry.actorTag ?? null,
+          createdAt: entry.createdAt ?? null,
+          durationSec: entry.durationSec ?? null,
+          dmUser: entry.dmUser ?? false,
+          evidenceUrl: entry.evidenceUrl ?? null,
+          guildId: entry.guildId ?? guildId,
+          memberId: entry.memberId ?? memberId
+        }))
+      );
+    } catch (error) {
+      console.error('Failed to load moderation history for person:', error);
+      res.status(500).json({ error: 'Failed to load moderation history.' });
     }
   });
 
@@ -709,30 +1331,81 @@ export function createDashboard(client, moderation) {
         return;
       }
 
-      const query = String(req.query.query ?? '').trim();
-      if (!query || query.length < 2) {
-        res.json([]);
-        return;
+      const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 250);
+      const rawQuery = String(req.query.query ?? '').trim();
+      const normalizedQuery = rawQuery.toLowerCase();
+
+      let membersList = [];
+
+      if (rawQuery.length >= 2) {
+        if (typeof guild.members?.search === 'function') {
+          const results = await guild.members.search({ query: rawQuery, limit });
+          membersList = Array.from(results.values());
+        } else {
+          let collection;
+          try {
+            collection = await guild.members.fetch({ limit: 1000, withPresences: false });
+          } catch (fetchError) {
+            console.error('Failed to fetch guild members for search:', fetchError);
+            collection = guild.members.cache;
+          }
+          membersList = Array.from(collection.values()).filter((member) => {
+            const display = (member.displayName ?? '').toLowerCase();
+            const username = (member.user?.username ?? '').toLowerCase();
+            const tag = (member.user?.tag ?? '').toLowerCase();
+            return (
+              display.includes(normalizedQuery) ||
+              username.includes(normalizedQuery) ||
+              (tag ? tag.includes(normalizedQuery) : false)
+            );
+          });
+          if (membersList.length > limit) {
+            membersList = membersList.slice(0, limit);
+          }
+        }
+      } else {
+        let collection = guild.members.cache;
+        const needsFetch = !collection?.size || collection.size < limit;
+        if (needsFetch) {
+          try {
+            collection = await guild.members.fetch({ limit, withPresences: false });
+          } catch (fetchError) {
+            console.error('Failed to fetch guild members list:', fetchError);
+            collection = guild.members.cache;
+          }
+        }
+
+        membersList = Array.from(collection.values());
+        membersList.sort((a, b) => {
+          const left = (a.displayName ?? a.user?.username ?? '').toLowerCase();
+          const right = (b.displayName ?? b.user?.username ?? '').toLowerCase();
+          if (left < right) {
+            return -1;
+          }
+          if (left > right) {
+            return 1;
+          }
+          return 0;
+        });
+        if (membersList.length > limit) {
+          membersList = membersList.slice(0, limit);
+        }
       }
 
-      const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 50);
-      const results =
-        guild.members?.search
-          ? await guild.members.search({ query, limit })
-          : await guild.members.fetch({ query, limit });
-
-      const members = Array.from(results.values()).map((member) => ({
+      const members = membersList.map((member) => ({
         id: member.id,
         displayName: member.displayName,
         username: member.user?.username ?? null,
         tag: member.user?.tag ?? null,
-        avatar: member.displayAvatarURL({ size: 64, extension: 'png' })
+        avatar: member.displayAvatarURL({ size: 64, extension: 'png' }),
+        joinedAt:
+          member.joinedAt instanceof Date ? member.joinedAt.toISOString() : null
       }));
 
       res.json(members);
     } catch (error) {
-      console.error('Failed to search guild members:', error);
-      res.status(500).json({ error: 'Failed to search members.' });
+      console.error('Failed to retrieve guild members:', error);
+      res.status(500).json({ error: 'Failed to load members.' });
     }
   });
 
@@ -742,29 +1415,21 @@ export function createDashboard(client, moderation) {
         return;
       }
       try {
-        const status = typeof req.query.status === 'string' ? req.query.status : 'all';
-        const category = typeof req.query.category === 'string' ? req.query.category : 'all';
-        const assignee = typeof req.query.assignee === 'string' ? req.query.assignee : 'all';
-        const search = typeof req.query.search === 'string' ? req.query.search : '';
-        const sla = typeof req.query.sla === 'string' ? req.query.sla : 'all';
         const limit = Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : 50;
         const offset = Number.isFinite(Number(req.query.offset)) ? Number(req.query.offset) : 0;
-        const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'updatedAt';
-        const direction = typeof req.query.direction === 'string' ? req.query.direction : 'desc';
-        const includeArchived = req.query.includeArchived !== 'false';
-        const mine = req.query.mine === 'true';
+        const filters = resolveCaseFilters(req.query, req.session?.user?.id ?? null);
         const result = await moderation.listCasesForGuild(req.params.guildId, {
-          status,
-          category,
-          assignee,
-          search,
-          sla,
+          status: filters.status,
+          category: filters.category,
+          assignee: filters.assignee,
+          search: filters.search,
+          sla: filters.sla,
           limit,
           offset,
-          sortBy,
-          direction,
-          includeArchived,
-          mine,
+          sortBy: filters.sortBy,
+          direction: filters.direction,
+          includeArchived: filters.includeArchived,
+          mine: filters.mine,
           userId: req.session?.user?.id ?? null
         });
         res.json(result);
@@ -1171,30 +1836,22 @@ export function createDashboard(client, moderation) {
         res.status(400).json({ error: 'guildId is required.' });
         return;
       }
-      const status = typeof req.query.status === 'string' ? req.query.status : 'all';
-      const category = typeof req.query.category === 'string' ? req.query.category : 'all';
-      const assignee = typeof req.query.assignee === 'string' ? req.query.assignee : 'all';
-      const search = typeof req.query.search === 'string' ? req.query.search : '';
-      const sla = typeof req.query.sla === 'string' ? req.query.sla : 'all';
       const limit = Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : 50;
       const offset = Number.isFinite(Number(req.query.offset)) ? Number(req.query.offset) : 0;
-      const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'updatedAt';
-      const direction = typeof req.query.direction === 'string' ? req.query.direction : 'desc';
-      const includeArchived = req.query.includeArchived !== 'false';
-      const mine = req.query.mine === 'true';
+      const filters = resolveCaseFilters(req.query, req.session?.user?.id ?? null);
 
       const result = await moderation.listCasesForGuild(guildId, {
-        status,
-        category,
-        assignee,
-        search,
-        sla,
+        status: filters.status,
+        category: filters.category,
+        assignee: filters.assignee,
+        search: filters.search,
+        sla: filters.sla,
         limit,
         offset,
-        sortBy,
-        direction,
-        includeArchived,
-        mine,
+        sortBy: filters.sortBy,
+        direction: filters.direction,
+        includeArchived: filters.includeArchived,
+        mine: filters.mine,
         userId: req.session?.user?.id ?? null
       });
 
@@ -1218,30 +1875,22 @@ export function createDashboard(client, moderation) {
 
     try {
       const format = typeof req.query.format === 'string' ? req.query.format.toLowerCase() : 'csv';
-      const status = typeof req.query.status === 'string' ? req.query.status : 'all';
-      const category = typeof req.query.category === 'string' ? req.query.category : 'all';
-      const assignee = typeof req.query.assignee === 'string' ? req.query.assignee : 'all';
-      const search = typeof req.query.search === 'string' ? req.query.search : '';
-      const sla = typeof req.query.sla === 'string' ? req.query.sla : 'all';
-      const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'updatedAt';
-      const direction = typeof req.query.direction === 'string' ? req.query.direction : 'desc';
-      const includeArchived = req.query.includeArchived !== 'false';
-      const mine = req.query.mine === 'true';
+      const filters = resolveCaseFilters(req.query, req.session?.user?.id ?? null);
       const exportLimit = Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : null;
 
       const cases = await collectCasesForExport(
         moderation,
         guildId,
         {
-          status,
-          category,
-          assignee,
-          search,
-          sla,
-          sortBy,
-          direction,
-          includeArchived,
-          mine,
+          status: filters.status,
+          category: filters.category,
+          assignee: filters.assignee,
+          search: filters.search,
+          sla: filters.sla,
+          sortBy: filters.sortBy,
+          direction: filters.direction,
+          includeArchived: filters.includeArchived,
+          mine: filters.mine,
           userId: req.session?.user?.id ?? null
         },
         exportLimit
@@ -1258,7 +1907,14 @@ export function createDashboard(client, moderation) {
         targetId: null,
         metadata: {
           format,
-          filters: { status, category, assignee, search, sla, mine },
+          filters: {
+            status: filters.status,
+            category: filters.category,
+            assignee: filters.assignee,
+            search: filters.search,
+            sla: filters.sla,
+            mine: filters.mine
+          },
           total: cases.length
         }
       });
@@ -1484,6 +2140,170 @@ export function createDashboard(client, moderation) {
     }
   });
 
+  api.post('/cases/:caseId/escalate', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const caseId = String(req.params.caseId ?? '').trim();
+    if (!caseId) {
+      res.status(400).json({ error: 'caseId is required.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const { guildId, caseEntry } = await resolveCaseContext(
+        caseId,
+        req.query.guildId ?? req.body?.guildId
+      );
+      if (!caseEntry || !guildId) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      const updated = await moderation.setCaseStatus({
+        guildId,
+        caseId,
+        status: 'escalated',
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null,
+        note: typeof req.body?.note === 'string' ? req.body.note : null
+      });
+      res.json(updated);
+    } catch (error) {
+      console.error('Failed to escalate case:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to escalate case.' });
+    }
+  });
+
+  api.post('/cases/:caseId/resolve', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const caseId = String(req.params.caseId ?? '').trim();
+    if (!caseId) {
+      res.status(400).json({ error: 'caseId is required.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const { guildId, caseEntry } = await resolveCaseContext(
+        caseId,
+        req.query.guildId ?? req.body?.guildId
+      );
+      if (!caseEntry || !guildId) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+      const updated = await moderation.setCaseStatus({
+        guildId,
+        caseId,
+        status: 'closed',
+        moderatorId: moderator?.id ?? null,
+        moderatorTag: moderator ? buildUserTag(moderator) : null,
+        note: typeof req.body?.note === 'string' ? req.body.note : null
+      });
+      res.json(updated);
+    } catch (error) {
+      console.error('Failed to resolve case:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to resolve case.' });
+    }
+  });
+
+  api.patch('/cases/:caseId', async (req, res) => {
+    if (!moderation) {
+      res.status(503).json({ error: 'Moderation engine not ready.' });
+      return;
+    }
+    const caseId = String(req.params.caseId ?? '').trim();
+    if (!caseId) {
+      res.status(400).json({ error: 'caseId is required.' });
+      return;
+    }
+
+    const moderator = req.session?.user;
+
+    try {
+      const { guildId, caseEntry } = await resolveCaseContext(
+        caseId,
+        req.query.guildId ?? req.body?.guildId
+      );
+      if (!caseEntry || !guildId) {
+        res.status(404).json({ error: 'Case not found.' });
+        return;
+      }
+
+      const updates = [];
+
+      if (typeof req.body?.status === 'string' && req.body.status.trim().length) {
+        await moderation.setCaseStatus({
+          guildId,
+          caseId,
+          status: req.body.status,
+          moderatorId: moderator?.id ?? null,
+          moderatorTag: moderator ? buildUserTag(moderator) : null,
+          note: typeof req.body?.note === 'string' ? req.body.note : null
+        });
+        updates.push('status');
+      }
+
+      if (
+        'assigneeId' in req.body ||
+        'assignee' in req.body ||
+        'assigneeTag' in req.body ||
+        'assigneeDisplayName' in req.body
+      ) {
+        await moderation.setCaseAssignee({
+          guildId,
+          caseId,
+          assigneeId: req.body?.assigneeId ?? req.body?.assignee ?? null,
+          assigneeTag: typeof req.body?.assigneeTag === 'string' ? req.body.assigneeTag : null,
+          assigneeDisplayName:
+            typeof req.body?.assigneeDisplayName === 'string' ? req.body.assigneeDisplayName : null,
+          moderatorId: moderator?.id ?? null,
+          moderatorTag: moderator ? buildUserTag(moderator) : null
+        });
+        updates.push('assignee');
+      }
+
+      if ('slaDueAt' in req.body || 'dueAt' in req.body) {
+        await moderation.setCaseSla({
+          guildId,
+          caseId,
+          dueAt:
+            typeof req.body?.slaDueAt === 'string'
+              ? req.body.slaDueAt
+              : typeof req.body?.dueAt === 'string'
+                ? req.body.dueAt
+                : null,
+          moderatorId: moderator?.id ?? null,
+          moderatorTag: moderator ? buildUserTag(moderator) : null
+        });
+        updates.push('sla');
+      }
+
+      if (!updates.length) {
+        res.status(400).json({ error: 'No supported fields provided for update.' });
+        return;
+      }
+
+      const latest = await moderation.getCaseDetails(guildId, caseId);
+      res.json({
+        success: true,
+        updates,
+        case: latest ?? caseEntry
+      });
+    } catch (error) {
+      console.error('Failed to patch case:', error);
+      res.status(500).json({ error: error?.message ?? 'Failed to update case.' });
+    }
+  });
+
   api.delete('/cases/:caseId', async (req, res) => {
     if (!moderation) {
       res.status(503).json({ error: 'Moderation engine not ready.' });
@@ -1664,6 +2484,281 @@ export function createDashboard(client, moderation) {
       res.status(500).json({ error: error?.message ?? 'Quick action failed.' });
     }
   });
+
+  api.post('/actions/daily-summary', async (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    if (typeof res.flushHeaders === 'function') {
+      res.flushHeaders();
+    }
+
+    const writeEvent = (payload) => {
+      try {
+        res.write(`data: ${JSON.stringify(payload)}
+
+`);
+      } catch (error) {
+        console.error('Failed to stream daily summary event:', error);
+      }
+    };
+
+    const guildId = sanitizeSnowflake(req.body?.guildId ?? req.query?.guildId);
+    const channelId = sanitizeSnowflake(req.body?.channelId ?? req.body?.channel);
+    const date = parseMetricsDate(req.body?.date);
+
+    const auditContext = buildAuditContext(req);
+
+    writeEvent({ status: 'collecting', guildId, channelId });
+
+    try {
+      let memberCount = null;
+      let guild = null;
+      if (guildId) {
+        guild = await resolveGuild(client, guildId);
+        memberCount = guild?.memberCount ?? null;
+      }
+
+      writeEvent({ status: 'generating' });
+      const summaryResult = await generateDailyOverviewSummary({
+        client,
+        moderation,
+        guildId,
+        date,
+        inputs: req.body ?? {},
+        memberCount
+      });
+
+      writeEvent({ status: 'generated', summary: summaryResult.text });
+
+      let delivery = null;
+      if (channelId) {
+        delivery = await deliverDreamGenMessage(client, {
+          channelId,
+          text: summaryResult.text
+        });
+        writeEvent({ status: 'delivered', delivery });
+      }
+
+      await recordAuditEntry({
+        action: 'actions.daily-summary',
+        actorId: auditContext.actorId ?? null,
+        actorTag: auditContext.actorTag ?? null,
+        actorRoles: auditContext.actorRoles ?? [],
+        guildId: delivery?.guildId ?? guildId ?? null,
+        targetType: 'channel',
+        targetId: delivery?.target?.id ?? channelId ?? null,
+        metadata: {
+          summary: summaryResult.payload,
+          delivery
+        }
+      });
+
+      writeEvent({
+        status: 'completed',
+        summary: summaryResult.text,
+        delivery
+      });
+    } catch (error) {
+      if (error?.statusCode) {
+        writeEvent({ status: 'error', error: error.message, code: error.statusCode });
+      } else if (error?.message?.startsWith?.('DreamGen')) {
+        writeEvent({ status: 'error', error: error.message, code: 503 });
+      } else {
+        console.error('Failed to generate daily summary:', error);
+        writeEvent({ status: 'error', error: 'Failed to generate daily summary.' });
+      }
+    } finally {
+      res.end();
+    }
+  });
+
+  api.get(
+    '/settings/rbac',
+    requirePermission(Permissions.MANAGE_RBAC),
+    async (req, res) => {
+      const guildId = sanitizeSnowflake(req.query.guild_id ?? req.query.guildId);
+      if (!guildId) {
+        res.status(400).json({ error: 'guild_id is required.' });
+        return;
+      }
+      try {
+        const config = await getGuildAssignments(guildId);
+        res.json({
+          guildId: config.guildId,
+          defaultRole: config.defaultRole,
+          assignments: Object.entries(config.assignments ?? {}).map(([rbacKey, roleIds]) => ({
+            rbacKey,
+            discordRoleIds: Array.isArray(roleIds) ? roleIds : []
+          }))
+        });
+      } catch (error) {
+        console.error('Failed to load RBAC assignments:', error);
+        res.status(500).json({ error: 'Failed to load RBAC assignments.' });
+      }
+    }
+  );
+
+  api.post(
+    '/settings/rbac',
+    requirePermission(Permissions.MANAGE_RBAC),
+    async (req, res) => {
+      const guildId = sanitizeSnowflake(req.body?.guildId ?? req.body?.guild_id);
+      if (!guildId) {
+        res.status(400).json({ error: 'guildId is required.' });
+        return;
+      }
+      const defaultRole =
+        typeof req.body?.defaultRole === 'string' && req.body.defaultRole.trim().length
+          ? req.body.defaultRole.trim().toLowerCase()
+          : undefined;
+      const assignmentsInput = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
+      const assignments = {};
+      for (const entry of assignmentsInput) {
+        const key =
+          typeof entry?.rbacKey === 'string' && entry.rbacKey.trim().length
+            ? entry.rbacKey.trim().toLowerCase()
+            : null;
+        if (!key) {
+          continue;
+        }
+        assignments[key] = Array.isArray(entry.discordRoleIds)
+          ? entry.discordRoleIds
+              .map((roleId) => (roleId ? String(roleId) : null))
+              .filter(Boolean)
+          : [];
+      }
+      try {
+        const updated = await setGuildAssignments(guildId, {
+          defaultRole,
+          assignments
+        });
+        await recordAuditEntry({
+          action: 'settings.rbac.update',
+          actorId: req.session?.user?.id ?? null,
+          actorTag: buildUserTag(req.session?.user) ?? null,
+          guildId,
+          targetType: 'settings',
+          targetId: 'rbac',
+          metadata: updated
+        });
+        res.json({
+          ok: true,
+          guildId: updated.guildId,
+          defaultRole: updated.defaultRole,
+          assignments: updated.assignments
+        });
+      } catch (error) {
+        console.error('Failed to update RBAC assignments:', error);
+        res.status(500).json({ error: 'Failed to update RBAC assignments.' });
+      }
+    }
+  );
+
+  api.get(
+    '/settings/verification',
+    requirePermission(Permissions.MANAGE_VERIFICATION),
+    async (req, res) => {
+      const guildId = sanitizeSnowflake(req.query.guild_id ?? req.query.guildId);
+      if (!guildId) {
+        res.status(400).json({ error: 'guild_id is required.' });
+        return;
+      }
+      try {
+        const config = await getVerificationConfig(guildId);
+        res.json({
+          guildId: config.guildId,
+          channelId: config.channelId,
+          staffChannelId: config.staffChannelId,
+          approvedRoleIds: config.approvedRoleIds,
+          questions: config.questions
+        });
+      } catch (error) {
+        console.error('Failed to load verification config:', error);
+        res.status(500).json({ error: 'Failed to load verification settings.' });
+      }
+    }
+  );
+
+  api.post(
+    '/settings/verification',
+    requirePermission(Permissions.MANAGE_VERIFICATION),
+    async (req, res) => {
+      const guildId = sanitizeSnowflake(req.body?.guildId ?? req.body?.guild_id);
+      if (!guildId) {
+        res.status(400).json({ error: 'guildId is required.' });
+        return;
+      }
+      const config = {
+        channelId: sanitizeSnowflake(req.body?.channelId ?? req.body?.channel_id),
+        staffChannelId: sanitizeSnowflake(req.body?.staffChannelId ?? req.body?.staff_channel_id),
+        approvedRoleIds: Array.isArray(req.body?.approvedRoleIds)
+          ? req.body.approvedRoleIds.map((roleId) => (roleId ? String(roleId) : null)).filter(Boolean)
+          : [],
+        questions: Array.isArray(req.body?.questions) ? req.body.questions : []
+      };
+      try {
+        const updated = await setVerificationConfig(guildId, config);
+        await recordAuditEntry({
+          action: 'settings.verification.update',
+          actorId: req.session?.user?.id ?? null,
+          actorTag: buildUserTag(req.session?.user) ?? null,
+          guildId,
+          targetType: 'settings',
+          targetId: 'verification',
+          metadata: updated
+        });
+        res.json({
+          ok: true,
+          config: updated
+        });
+      } catch (error) {
+        console.error('Failed to update verification settings:', error);
+        res.status(500).json({ error: 'Failed to update verification settings.' });
+      }
+    }
+  );
+
+  api.post('/telemetry/enable', requirePermission(Permissions.VIEW_INSIGHTS), async (req, res) => {
+    try {
+      const settings = await setTelemetryEnabled(true);
+      const auditContext = buildAuditContext(req);
+      await recordAuditEntry({
+        action: 'telemetry.enable',
+        actorId: auditContext.actorId ?? null,
+        actorTag: auditContext.actorTag ?? null,
+        actorRoles: auditContext.actorRoles ?? [],
+        targetType: 'telemetry',
+        targetId: null,
+        metadata: {
+          enabled: settings.enabled,
+          enabledAt: settings.enabledAt
+        }
+      });
+      res.json({ enabled: settings.enabled, enabled_at: settings.enabledAt });
+    } catch (error) {
+      console.error('Failed to enable telemetry:', error);
+      res.status(500).json({ error: 'Failed to enable telemetry.' });
+    }
+  });
+
+  api.get(
+    '/insights/commands',
+    requirePermission(Permissions.VIEW_INSIGHTS),
+    async (req, res) => {
+      try {
+        const range =
+          typeof req.query.range === 'string' && req.query.range.trim().length
+            ? req.query.range.trim()
+            : 'last_7_days';
+        const telemetry = await getCommandTelemetry(range);
+        res.json(telemetry);
+      } catch (error) {
+        console.error('Failed to load command telemetry:', error);
+        res.status(500).json({ error: 'Failed to load command insights.' });
+      }
+    }
+  );
 
   api.get('/moderation/cases', async (req, res) => {
     if (!moderation) {
@@ -1894,21 +2989,185 @@ export function createDashboard(client, moderation) {
     }
   });
 
+  app.use('/internal', requireAuth, attachRbac, internal);
   app.use('/api', requireAuth, attachRbac, api);
 
-  if (fs.existsSync(clientDistDir)) {
-    app.use(express.static(clientDistDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(clientDistDir, 'index.html'));
-    });
-  } else {
-    app.use(express.static(legacyPublicDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(legacyPublicDir, 'index.html'));
-    });
-  }
+  app.use(express.static(clientDistDir));
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(clientDistDir, 'index.html'));
+  });
 
   return app;
+}
+
+async function deliverDreamGenMessage(client, { channelId = null, userId = null, text }) {
+  if (!text || !String(text).trim().length) {
+    const error = new Error('text is required.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (channelId) {
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.isTextBased?.()) {
+      const error = new Error('Channel not found or not text based.');
+      error.statusCode = 404;
+      throw error;
+    }
+    const message = await channel.send({ content: text });
+    return {
+      target: {
+        type: 'channel',
+        id: channel.id,
+        name: channel.name ?? null
+      },
+      messageId: message?.id ?? null,
+      guildId: channel.guild?.id ?? null
+    };
+  }
+
+  if (userId) {
+    const user = await client.users.fetch(userId).catch(() => null);
+    if (!user) {
+      const error = new Error('User not found.');
+      error.statusCode = 404;
+      throw error;
+    }
+    const dm = user.dmChannel ?? (await user.createDM().catch(() => null));
+    if (!dm) {
+      const error = new Error('Could not open DM channel.');
+      error.statusCode = 500;
+      throw error;
+    }
+    const message = await dm.send({ content: text });
+    return {
+      target: {
+        type: 'user',
+        id: user.id,
+        tag: user.tag ?? user.username ?? null
+      },
+      messageId: message?.id ?? null,
+      guildId: null
+    };
+  }
+
+  const error = new Error('channel or user is required.');
+  error.statusCode = 400;
+  throw error;
+}
+
+function resolveCaseFilters(query = {}, userId = null) {
+  const filters = {
+    status:
+      typeof query.status === 'string' && query.status.trim().length
+        ? query.status.trim().toLowerCase()
+        : 'all',
+    category:
+      typeof query.category === 'string' && query.category.trim().length
+        ? query.category.trim().toLowerCase()
+        : 'all',
+    assignee:
+      typeof query.assignee === 'string' && query.assignee.trim().length
+        ? query.assignee.trim().toLowerCase()
+        : 'all',
+    search: typeof query.search === 'string' ? query.search : '',
+    sla:
+      typeof query.sla === 'string' && query.sla.trim().length
+        ? query.sla.trim().toLowerCase()
+        : 'all',
+    mine: query.mine === 'true',
+    includeArchived: query.includeArchived !== 'false',
+    sortBy:
+      typeof query.sortBy === 'string' && query.sortBy.trim().length
+        ? query.sortBy.trim()
+        : typeof query.sort === 'string' && query.sort.trim().length
+          ? query.sort.trim()
+          : 'updatedAt',
+    direction:
+      typeof query.direction === 'string' && query.direction.trim().length
+        ? query.direction.trim()
+        : 'desc'
+  };
+
+  const queue =
+    typeof query.queue === 'string' && query.queue.trim().length
+      ? query.queue.trim().toLowerCase()
+      : null;
+
+  if (queue === 'active') {
+    filters.status = 'active';
+  } else if (queue === 'mine') {
+    filters.status = 'active';
+    filters.mine = true;
+  } else if (queue === 'sla_overdue') {
+    filters.status = 'active';
+    filters.sla = 'overdue';
+  } else if (queue === 'escalated') {
+    filters.status = 'escalated';
+  }
+
+  if (filters.assignee === 'me' && userId) {
+    filters.mine = true;
+  }
+
+  const normalizedSort = filters.sortBy.toLowerCase();
+  if (normalizedSort === 'last_update' || normalizedSort === 'last-update') {
+    filters.sortBy = 'updatedAt';
+  } else if (normalizedSort === 'opened') {
+    filters.sortBy = 'createdAt';
+  }
+
+  return filters;
+}
+
+async function generateDailyOverviewSummary({
+  client,
+  moderation,
+  guildId = null,
+  date = new Date(),
+  inputs = {},
+  memberCount = null
+} = {}) {
+  const [summary, engagement, alerts] = await Promise.all([
+    getOverviewSummary({ guildId, date, memberCount, moderation, clientReady: client.isReady() }),
+    getOverviewEngagement({ guildId, range: 'last_30_days' }),
+    getOverviewAlerts({ guildId, date, moderation, memberCount })
+  ]);
+
+  const payload = {
+    kind: 'daily_overview',
+    context: {
+      summary,
+      engagement,
+      alerts,
+      inputs
+    }
+  };
+
+  const text = await callDreamGen({
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are DreamGen, an assistant that writes concise leadership-ready summaries about community activity. Keep tone factual, upbeat, and actionable.'
+      },
+      {
+        role: 'user',
+        content: [
+          'Create a short daily overview (3-5 bullet sentences) using the following JSON metrics.',
+          'Highlight major changes, note risks, and suggest one quick action if relevant.',
+          'JSON:',
+          JSON.stringify(payload, null, 2)
+        ].join('\n')
+      }
+    ],
+    controls: {
+      temperature: 0.4,
+      topP: 0.8
+    }
+  });
+
+  return { text, payload };
 }
 
 async function collectPeopleForExport(filters = {}, limit = null) {
@@ -2079,3 +3338,15 @@ function buildUserTag(user) {
   }
   return null;
 }
+
+
+
+
+
+
+
+
+
+
+
+

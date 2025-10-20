@@ -833,6 +833,15 @@ export async function getRecentCases(limit = 50) {
     .map((entry) => serializeCaseEntry(entry))
 }
 
+export async function listAllCases({ guildId = null, includeTimeline = true } = {}) {
+  const data = await loadData()
+  const normalizedGuildId = guildId ? String(guildId) : null
+  const entries = normalizedGuildId
+    ? data.cases.filter((item) => item.guildId === normalizedGuildId)
+    : data.cases
+  return entries.map((entry) => serializeCaseEntry(entry, { includeTimeline }))
+}
+
 export async function getUserTotals(guildId, userId) {
   if (!guildId || !userId) {
     return defaultTotals()

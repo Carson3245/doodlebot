@@ -18,7 +18,12 @@ export function invalidateMetricsCache() {
   cachedMetrics = null
 }
 
-export async function getHeadcountSeries({ guildId = null, period = '30d', date = new Date(), memberCount = null } = {}) {
+export async function getHeadcountSeries({
+  guildId = null,
+  period = '30d',
+  date = new Date(),
+  memberCount = null
+} = {}) {
   await ensureWatcher()
   const metrics = await loadMetrics()
   const series = cloneAndNormalizeSeries(
@@ -110,7 +115,8 @@ export async function getOverviewKpis({
   ])
 
   const activeCurrent = memberCount ?? headcount.summary.current ?? 0
-  const previousActive = headcount.summary.previous ?? (headcount.summary.current ?? activeCurrent) - headcount.summary.delta
+  const previousActive =
+    headcount.summary.previous ?? (headcount.summary.current ?? activeCurrent) - headcount.summary.delta
   const activeDelta = previousActive !== null ? activeCurrent - previousActive : headcount.summary.delta
 
   const entriesCurrent = flow.summary.current.entries
@@ -140,9 +146,212 @@ export async function getOverviewKpis({
   }
 }
 
+export async function getOverviewSummary({
+  guildId = null,
+  date = new Date(),
+  memberCount = null,
+  moderation = null,
+  clientReady = false
+} = {}) {
+  const period = '30d'
+  const [headcount, flow, engagement, cases] = await Promise.all([
+    getHeadcountSeries({ guildId, period, date, memberCount }),
+    getFlowSeries({ guildId, period, date }),
+    getEngagementSnapshot({ guildId, period }),
+    computeCaseSnapshot({ moderation, guildId, period, date })
+  ])
+
+  const activeCurrent = memberCount ?? headcount.summary.current ?? 0
+  const previousActive =
+    headcount.summary.previous ?? (headcount.summary.current ?? activeCurrent) - headcount.summary.delta
+
+  const entriesCurrent = flow.summary.current.entries
+  const entriesPrevious = flow.summary.previous.entries
+
+  const exitsCurrent = flow.summary.current.exits
+  const exitsPrevious = flow.summary.previous.exits
+
+  const engagementPerDay = Math.round(engagement.summary.messagesPerDay)
+  const engagementPreviousPerDay = Math.round(engagement.summary.previousMessagesPerDay)
+
+  return {
+    active_members: Math.max(0, Math.round(activeCurrent)),
+    entries_this_month: Math.max(0, Math.round(entriesCurrent)),
+    exits_this_month: Math.max(0, Math.round(exitsCurrent)),
+    open_cases: Math.max(0, Math.round(cases.current ?? 0)),
+    engagement_per_day: Math.max(0, Math.round(engagementPerDay)),
+    bot_status: clientReady ? 'online' : 'offline',
+    trend: {
+      active_members_vs_prev: computeChangeRatio(activeCurrent, previousActive),
+      entries_vs_prev: computeChangeRatio(entriesCurrent, entriesPrevious),
+      exits_vs_prev: computeChangeRatio(exitsCurrent, exitsPrevious),
+      open_cases_vs_prev: computeChangeRatio(cases.current, cases.previous),
+      engagement_vs_prev: computeChangeRatio(engagementPerDay, engagementPreviousPerDay)
+    },
+    previous: {
+      active_members: Math.max(0, Math.round(previousActive ?? 0)),
+      entries_this_month: Math.max(0, Math.round(entriesPrevious ?? 0)),
+      exits_this_month: Math.max(0, Math.round(exitsPrevious ?? 0)),
+      open_cases: Math.max(0, Math.round(cases.previous ?? 0)),
+      engagement_per_day: Math.max(0, Math.round(engagementPreviousPerDay ?? 0))
+    },
+    metadata: {
+      period,
+      generated_at: new Date().toISOString()
+    }
+  }
+}
+
+export async function getOverviewHeadcount({
+  guildId = null,
+  range = 'last_6_months',
+  date = new Date(),
+  memberCount = null
+} = {}) {
+  const months = range === 'last_6_months' ? '180d' : '30d'
+  const result = await getHeadcountSeries({ guildId, period: months, date, memberCount })
+  const history = (Array.isArray(result.history) ? result.history : []).map((point) => {
+    const normalizedValue = Math.max(0, Math.round(point.value ?? 0))
+    const monthKey = point.date ? formatMonthKey(point.date) : null
+    return {
+      ...point,
+      month: monthKey,
+      members: normalizedValue,
+      value: normalizedValue,
+      label: point.label ?? (point.date ? formatMonthLabel(new Date(point.date)) : monthKey),
+      date: point.date ?? null
+    }
+  })
+  return {
+    series: history,
+    history,
+    summary: {
+      current: Math.max(0, Math.round(result.summary.current ?? 0)),
+      previous: Math.max(0, Math.round(result.summary.previous ?? 0)),
+      delta: Math.round(result.summary.delta ?? 0),
+      percent: computeChangeRatioPercent(result.summary.current, result.summary.previous)
+    }
+  }
+}
+
+export async function getOverviewFlow({ guildId = null, range = 'last_6_months', date = new Date() } = {}) {
+  const months = range === 'last_6_months' ? '180d' : '30d'
+  const result = await getFlowSeries({ guildId, period: months, date })
+  const history = (Array.isArray(result.history) ? result.history : []).map((point) => {
+    const monthKey = point.date ? formatMonthKey(point.date) : null
+    const entries = Math.max(0, Math.round(point.entries ?? 0))
+    const exits = Math.max(0, Math.round(point.exits ?? 0))
+    return {
+      ...point,
+      month: monthKey,
+      entries,
+      exits,
+      net: entries - exits,
+      label: point.label ?? (point.date ? formatMonthLabel(new Date(point.date)) : monthKey),
+      date: point.date ?? null
+    }
+  })
+  return {
+    series: history,
+    history,
+    summary: result.summary
+  }
+}
+
+export async function getOverviewEngagement({
+  guildId = null,
+  range = 'last_30_days'
+} = {}) {
+  const period = range === 'last_30_days' ? '30d' : range === 'last_7_days' ? '7d' : '30d'
+  const snapshot = await getEngagementSnapshot({ guildId, period })
+  const channels = Array.isArray(snapshot.channels)
+    ? snapshot.channels.map((channel) => {
+        const name = channel.channel ?? channel.name ?? '#general'
+        const messages = Math.max(0, Math.round(channel.messages ?? channel.count ?? 0))
+        return {
+          channel: name,
+          name,
+          messages,
+          count: messages
+        }
+      })
+    : []
+  const summary = snapshot.summary ?? {}
+  const avgPerDay = Math.round(summary.messagesPerDay ?? 0)
+  const previousPerDay = Math.round(summary.previousMessagesPerDay ?? 0)
+  const totalMessages = Number(summary.totalMessages ?? 0)
+  const previousTotalMessages = Number(summary.previousTotalMessages ?? 0)
+  return {
+    period,
+    avg_per_day: avgPerDay,
+    delta_vs_prev: computeChangeRatio(avgPerDay, previousPerDay),
+    channels,
+    summary: {
+      totalMessages: Math.max(0, Math.round(totalMessages)),
+      previousTotalMessages: Math.max(0, Math.round(previousTotalMessages)),
+      messagesPerDay: avgPerDay,
+      previousMessagesPerDay: previousPerDay,
+      deltaPerDay: summary.deltaPerDay ?? avgPerDay - previousPerDay
+    }
+  }
+}
+
+export async function getOverviewAlerts({
+  guildId = null,
+  date = new Date(),
+  moderation = null,
+  memberCount = null
+} = {}) {
+  const [summary, flow] = await Promise.all([
+    getOverviewSummary({ guildId, date, memberCount, moderation }),
+    getFlowSeries({ guildId, period: '180d', date })
+  ])
+
+  const alerts = []
+  const exitsTimeline = Array.isArray(flow.history) ? flow.history.slice().sort((a, b) => a.date.localeCompare(b.date)) : []
+  if (exitsTimeline.length >= 2) {
+    const current = exitsTimeline[exitsTimeline.length - 1]
+    const previous = exitsTimeline[exitsTimeline.length - 2]
+    const exitsCurrent = Math.max(0, Math.round(current?.exits ?? 0))
+    const exitsPrevious = Math.max(0, Math.round(previous?.exits ?? 0))
+    const activeMembers = Math.max(0, Math.round(summary.active_members ?? 0))
+    const minimum = Math.max(0, Math.min(5, Math.round(0.05 * activeMembers)))
+    if (exitsPrevious > 0 && exitsCurrent >= exitsPrevious * 2 && exitsCurrent >= minimum) {
+      alerts.push({
+        id: 'turnover_spike',
+        severity: 'high',
+        title: 'Turnover spike',
+        body: 'Exits are 2x higher than last month. Review exit interviews.',
+        cta: { label: 'Open report', href: '/cases?category=offboarding' },
+        metrics: {
+          exits_current: exitsCurrent,
+          exits_previous: exitsPrevious,
+          active_members: activeMembers
+        }
+      })
+    }
+  }
+
+  if (moderation) {
+    const automod = await computeAutomodLoad({ moderation, guildId, date })
+    if (automod && automod.current >= automod.threshold && automod.threshold > 0) {
+      alerts.push({
+        id: 'moderation_load',
+        severity: 'medium',
+        title: 'Moderation load',
+        body: 'Automod activity is above the usual range. Review recent actions.',
+        cta: { label: 'Open automod', href: '/moderation?tab=automod' },
+        metrics: automod
+      })
+    }
+  }
+
+  return alerts
+}
+
 async function computeCaseSnapshot({ moderation, guildId, period, date }) {
   if (!moderation || !guildId) {
-    return { current: 0, delta: 0 }
+    return { current: 0, previous: 0, delta: 0, openedCurrent: 0, openedPrevious: 0 }
   }
 
   try {
@@ -156,6 +365,7 @@ async function computeCaseSnapshot({ moderation, guildId, period, date }) {
     const previousStart = subtractDays(previousEnd, periodDays - 1)
 
     let current = 0
+    let previousEstimate = 0
     let openedCurrent = 0
     let openedPrevious = 0
 
@@ -163,11 +373,16 @@ async function computeCaseSnapshot({ moderation, guildId, period, date }) {
       if (!entry) {
         continue
       }
-      if (!TERMINAL_CASE_STATUSES.has(normalizeStatus(entry.status))) {
+      const normalizedStatus = normalizeStatus(entry.status)
+      const isActive = !TERMINAL_CASE_STATUSES.has(normalizedStatus)
+      const createdAt = parseDate(entry.createdAt)
+      if (isActive) {
         current += 1
+        if (createdAt && createdAt <= previousEnd) {
+          previousEstimate += 1
+        }
       }
 
-      const createdAt = parseDate(entry.createdAt)
       if (!createdAt) {
         continue
       }
@@ -180,10 +395,14 @@ async function computeCaseSnapshot({ moderation, guildId, period, date }) {
       }
     }
 
-    return { current, delta: openedCurrent - openedPrevious }
+    const delta = openedCurrent - openedPrevious
+    const derivedPrevious = Math.max(0, current - delta)
+    const previous = Math.max(0, Math.max(previousEstimate, derivedPrevious))
+
+    return { current, previous, delta, openedCurrent, openedPrevious }
   } catch (error) {
     console.warn('Failed to compute case snapshot for metrics:', error)
-    return { current: 0, delta: 0 }
+    return { current: 0, previous: 0, delta: 0, openedCurrent: 0, openedPrevious: 0 }
   }
 }
 
@@ -426,6 +645,13 @@ function formatMonthLabel(date) {
 }
 
 function formatMonthKey(date) {
+  if (typeof date === 'string') {
+    const parsed = new Date(date)
+    if (!Number.isNaN(parsed.getTime())) {
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`
+    }
+    return date
+  }
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 }
 
@@ -504,5 +730,90 @@ function createDefaultMetrics() {
   }
 
   return { headcount, flow, engagement }
+}
+
+function computeChangeRatio(current, previous) {
+  const currentNumber = Number(current)
+  const previousNumber = Number(previous)
+  if (!Number.isFinite(currentNumber)) {
+    return 0
+  }
+  if (!Number.isFinite(previousNumber) || previousNumber === 0) {
+    return currentNumber > 0 ? 1 : 0
+  }
+  const delta = currentNumber - previousNumber
+  return Number.isFinite(delta / previousNumber) ? +(delta / previousNumber).toFixed(4) : 0
+}
+
+function computeChangeRatioPercent(current, previous) {
+  const ratio = computeChangeRatio(current, previous)
+  return Number.isFinite(ratio) ? +(ratio * 100).toFixed(2) : 0
+}
+
+async function computeAutomodLoad({ moderation, guildId, date }) {
+  if (!moderation || !guildId) {
+    return null
+  }
+
+  try {
+    const limit = 400
+    const response = await moderation.listCasesForGuild(guildId, { status: 'all', category: 'all', limit })
+    const cases = Array.isArray(response?.items) ? response.items : Array.isArray(response) ? response : []
+    const now = date instanceof Date ? date : new Date(date ?? Date.now())
+    const cutoffMs = now.getTime() - 24 * 60 * 60 * 1000
+    const historyCutoffMs = now.getTime() - 30 * 24 * 60 * 60 * 1000
+
+    const dailyBuckets = new Map()
+    let currentTotal = 0
+
+    for (const entry of cases) {
+      if (!entry || !Array.isArray(entry.actions)) {
+        continue
+      }
+      for (const action of entry.actions) {
+        if (!action || String(action.source || '').toLowerCase() !== 'automod') {
+          continue
+        }
+        const createdAt = parseDate(action.createdAt)
+        if (!createdAt) {
+          continue
+        }
+        const timestamp = createdAt.getTime()
+        if (timestamp >= cutoffMs) {
+          currentTotal += 1
+        }
+        if (timestamp >= historyCutoffMs) {
+          const key = createdAt.toISOString().slice(0, 10)
+          dailyBuckets.set(key, (dailyBuckets.get(key) ?? 0) + 1)
+        }
+      }
+    }
+
+    const history = Array.from(dailyBuckets.values()).sort((a, b) => a - b)
+    const threshold = history.length ? calculatePercentile(history, 0.9) : 0
+    return {
+      current: currentTotal,
+      threshold,
+      history_days: history.length
+    }
+  } catch (error) {
+    console.warn('Failed to compute automod load metrics:', error)
+    return null
+  }
+}
+
+function calculatePercentile(values, percentile) {
+  if (!Array.isArray(values) || !values.length) {
+    return 0
+  }
+  const sorted = values.slice().sort((a, b) => a - b)
+  const index = (sorted.length - 1) * percentile
+  const lower = Math.floor(index)
+  const upper = Math.ceil(index)
+  if (lower === upper) {
+    return sorted[lower]
+  }
+  const weight = index - lower
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight
 }
 

@@ -1,45 +1,59 @@
 export const Roles = {
+  OWNER: 'owner',
   ADMIN: 'admin',
-  RH_LITE: 'rh-lite',
-  MODERATOR: 'mod',
-  MANAGER: 'manager',
-  READ_ONLY: 'read-only'
+  MOD: 'mod',
+  VIEWER: 'viewer'
 }
 
 const ROLE_INHERITANCE = {
-  [Roles.ADMIN]: [Roles.RH_LITE, Roles.MODERATOR, Roles.MANAGER, Roles.READ_ONLY],
-  [Roles.RH_LITE]: [Roles.MANAGER, Roles.READ_ONLY],
-  [Roles.MANAGER]: [Roles.READ_ONLY],
-  [Roles.MODERATOR]: [Roles.READ_ONLY],
-  [Roles.READ_ONLY]: []
+  [Roles.OWNER]: [Roles.ADMIN, Roles.MOD, Roles.VIEWER],
+  [Roles.ADMIN]: [Roles.MOD, Roles.VIEWER],
+  [Roles.MOD]: [Roles.VIEWER],
+  [Roles.VIEWER]: []
 }
 
 export const Permissions = {
+  VIEW_OVERVIEW: 'overview:read',
   VIEW_PEOPLE: 'people:read',
-  MANAGE_PEOPLE: 'people:manage',
+  MANAGE_PEOPLE: 'people:actions',
   IMPORT_PEOPLE: 'people:import',
+  MANAGE_PEOPLE_NOTES: 'people:notes',
+  VIEW_CASES: 'cases:read',
+  MANAGE_CASES: 'cases:manage',
+  VIEW_CHECKINS: 'checkins:read',
+  UPDATE_CHECKINS: 'checkins:update',
+  VIEW_INSIGHTS: 'insights:read',
+  MANAGE_ALERTS: 'alerts:manage',
+  MANAGE_SETTINGS: 'settings:write',
+  MANAGE_RBAC: 'rbac:manage',
+  MANAGE_VERIFICATION: 'verification:manage',
+  EXECUTE_DANGEROUS: 'ops:dangerous',
   ANNOUNCE_PEOPLE: 'people:announce',
   ROLESYNC: 'people:rolesync',
   OFFBOARD: 'people:offboard',
-  VIEW_CHECKINS: 'checkins:read',
-  UPDATE_CHECKINS: 'checkins:update',
-  VIEW_AUDIT: 'audit:read',
-  VIEW_INSIGHTS: 'insights:read',
-  MANAGE_SETTINGS: 'settings:write'
+  VIEW_AUDIT: 'audit:read'
 }
 
 const PERMISSION_MATRIX = new Map([
-  [Permissions.VIEW_PEOPLE, new Set([Roles.ADMIN, Roles.RH_LITE, Roles.MODERATOR, Roles.MANAGER, Roles.READ_ONLY])],
-  [Permissions.MANAGE_PEOPLE, new Set([Roles.ADMIN, Roles.RH_LITE, Roles.MANAGER])],
-  [Permissions.IMPORT_PEOPLE, new Set([Roles.ADMIN, Roles.RH_LITE])],
-  [Permissions.ANNOUNCE_PEOPLE, new Set([Roles.ADMIN, Roles.RH_LITE, Roles.MANAGER])],
-  [Permissions.ROLESYNC, new Set([Roles.ADMIN, Roles.RH_LITE, Roles.MODERATOR])],
-  [Permissions.OFFBOARD, new Set([Roles.ADMIN, Roles.RH_LITE])],
-  [Permissions.VIEW_CHECKINS, new Set([Roles.ADMIN, Roles.RH_LITE, Roles.MANAGER, Roles.READ_ONLY])],
-  [Permissions.UPDATE_CHECKINS, new Set([Roles.ADMIN, Roles.RH_LITE, Roles.MANAGER])],
-  [Permissions.VIEW_AUDIT, new Set([Roles.ADMIN, Roles.RH_LITE])],
-  [Permissions.VIEW_INSIGHTS, new Set([Roles.ADMIN, Roles.RH_LITE, Roles.MANAGER])],
-  [Permissions.MANAGE_SETTINGS, new Set([Roles.ADMIN])]
+  [Permissions.VIEW_OVERVIEW, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD, Roles.VIEWER])],
+  [Permissions.VIEW_PEOPLE, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD, Roles.VIEWER])],
+  [Permissions.MANAGE_PEOPLE, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD])],
+  [Permissions.IMPORT_PEOPLE, new Set([Roles.OWNER, Roles.ADMIN])],
+  [Permissions.MANAGE_PEOPLE_NOTES, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD])],
+  [Permissions.VIEW_CASES, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD, Roles.VIEWER])],
+  [Permissions.MANAGE_CASES, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD])],
+  [Permissions.VIEW_CHECKINS, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD, Roles.VIEWER])],
+  [Permissions.UPDATE_CHECKINS, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD])],
+  [Permissions.VIEW_INSIGHTS, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD, Roles.VIEWER])],
+  [Permissions.MANAGE_ALERTS, new Set([Roles.OWNER, Roles.ADMIN])],
+  [Permissions.MANAGE_SETTINGS, new Set([Roles.OWNER, Roles.ADMIN])],
+  [Permissions.MANAGE_RBAC, new Set([Roles.OWNER, Roles.ADMIN])],
+  [Permissions.MANAGE_VERIFICATION, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD])],
+  [Permissions.EXECUTE_DANGEROUS, new Set([Roles.OWNER])],
+  [Permissions.ANNOUNCE_PEOPLE, new Set([Roles.OWNER, Roles.ADMIN])],
+  [Permissions.ROLESYNC, new Set([Roles.OWNER, Roles.ADMIN, Roles.MOD])],
+  [Permissions.OFFBOARD, new Set([Roles.OWNER, Roles.ADMIN])],
+  [Permissions.VIEW_AUDIT, new Set([Roles.OWNER, Roles.ADMIN])]
 ])
 
 export function normalizeRoles(roles = []) {
@@ -57,7 +71,7 @@ export function normalizeRoles(roles = []) {
     }
   }
   if (normalized.size === 0) {
-    normalized.add(Roles.READ_ONLY)
+    normalized.add(Roles.VIEWER)
   }
   return Array.from(normalized)
 }

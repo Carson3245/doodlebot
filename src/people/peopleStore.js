@@ -129,6 +129,12 @@ async function loadData() {
 }
 
 function normalizePerson(person = {}) {
+  const normalizedExternalId =
+    typeof person.externalId === 'string' && person.externalId.trim().length
+      ? person.externalId.trim()
+      : null
+  const rawDiscordId = person.discordId ?? (normalizedExternalId && normalizedExternalId.startsWith('discord:') ? normalizedExternalId.slice(8) : normalizedExternalId)
+  const normalizedDiscordId = rawDiscordId && String(rawDiscordId).trim().length ? String(rawDiscordId).trim() : null
   const normalized = {
     id: String(person.id ?? createId()),
     guildId: person.guildId ? String(person.guildId) : null,
@@ -158,7 +164,9 @@ function normalizePerson(person = {}) {
     avatar: typeof person.avatar === 'string' ? person.avatar : null,
     pronouns: typeof person.pronouns === 'string' ? person.pronouns.trim() : null,
     note: typeof person.note === 'string' ? person.note : null,
-    externalId: typeof person.externalId === 'string' ? person.externalId.trim() : null,
+    externalId: normalizedExternalId,
+    discordId: normalizedDiscordId,
+    discordTag: typeof person.discordTag === 'string' ? person.discordTag.trim() : null,
     lastAnnouncedAt: person.lastAnnouncedAt ? new Date(person.lastAnnouncedAt).toISOString() : null,
     lastRolesyncAt: person.lastRolesyncAt ? new Date(person.lastRolesyncAt).toISOString() : null,
     offboardedAt: person.offboardedAt ? new Date(person.offboardedAt).toISOString() : null,
@@ -677,6 +685,73 @@ export async function recordCheckin(personId, cadence, {
   return clonePerson(person)
 }
 
+export async function scheduleCheckin(personId, type, {
+  dueAt = null,
+  notes = null,
+  actorId = null,
+  actorTag = null
+} = {}) {
+  if (!personId) {
+    throw new Error('personId is required')
+  }
+
+  const data = await loadData()
+  const index = data.people.findIndex((person) => person.id === String(personId))
+  if (index === -1) {
+    throw new Error('Person not found')
+  }
+
+  const person = data.people[index]
+  ensureCheckins(person)
+
+  const normalizedType =
+    typeof type === 'string' && type.trim().length ? type.trim().toLowerCase() : 'custom'
+
+  let entry = person.checkins.find((item) => item.cadence === normalizedType)
+  if (!entry) {
+    entry = normalizeCheckin({ cadence: normalizedType, status: 'pending' })
+    person.checkins.push(entry)
+  }
+
+  const now = new Date().toISOString()
+  entry.status = 'pending'
+  entry.notes = notes ?? entry.notes ?? null
+  entry.updatedAt = now
+
+  const cadence = CHECKIN_CADENCES.find((item) => item.key === normalizedType)
+  const due = dueAt
+    ? normalizeDate(dueAt)
+    : cadence
+      ? new Date(Date.now() + cadence.days * 24 * 60 * 60 * 1000).toISOString()
+      : null
+
+  entry.dueAt = due
+  entry.completedAt = null
+  entry.completedBy = null
+  entry.completedByTag = null
+
+  refreshPersonCheckinSummary(person)
+  data.people[index] = person
+  data.updatedAt = now
+  await persistData(data)
+
+  await recordAuditEntry({
+    action: 'people.checkin.schedule',
+    actorId: actorId ?? null,
+    actorTag: actorTag ?? null,
+    targetId: person.id,
+    targetType: 'person',
+    targetLabel: person.displayName,
+    metadata: {
+      cadence: normalizedType,
+      dueAt: entry.dueAt,
+      notes: notes ?? null
+    }
+  })
+
+  return clonePerson(person)
+}
+
 export async function listCheckinsForPerson(personId) {
   const person = await getPerson(personId)
   if (!person) {
@@ -705,6 +780,28 @@ export async function getPeopleSummary() {
 export async function getAllPeople() {
   const data = await loadData()
   return data.people.map(clonePerson)
+}
+
+export async function getOnboardingChecklist() {
+  const data = await loadData()
+  return data.people
+    .filter((person) => person.status === 'onboarding')
+    .map((person) => {
+      ensureCheckins(person)
+      return {
+        person_id: person.id,
+        name: person.displayName,
+        status: person.status,
+        department: person.department ?? null,
+        checklist: person.checkins.map((entry) => ({
+          id: `${person.id}:${entry.cadence}`,
+          cadence: entry.cadence,
+          due_at: entry.dueAt ?? null,
+          status: entry.status ?? 'pending',
+          notes: entry.notes ?? null
+        }))
+      }
+    })
 }
 
 function serializePersonSummary(person) {
@@ -747,3 +844,5 @@ function serializePersonSummary(person) {
     }
   }
 }
+
+

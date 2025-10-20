@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useAuth } from '../authContext.js'
 import { useGuild } from '../guildContext.js'
 
@@ -7,14 +7,16 @@ const STATUS_OPTIONS = [
   { value: 'active', label: 'Active' },
   { value: 'onboarding', label: 'Onboarding' },
   { value: 'inactive', label: 'Inactive' },
-  { value: 'offboarded', label: 'Offboarded' }
+  { value: 'offboarded', label: 'Offboarded' },
+  { value: 'not_onboarded', label: 'Not onboarded' }
 ]
 
 const STATUS_LABELS = {
   active: 'Active',
   onboarding: 'Onboarding',
   inactive: 'Inactive',
-  offboarded: 'Offboarded'
+  offboarded: 'Offboarded',
+  not_onboarded: 'Not onboarded'
 }
 
 const DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
@@ -32,13 +34,47 @@ const TIME_FORMATTER = new Intl.DateTimeFormat('en-US', {
 
 const RELATIVE_FORMATTER = new Intl.RelativeTimeFormat('en', { style: 'short' })
 
-const CHECKIN_LABELS = {
-  '7d': '7 day',
-  '30d': '30 day',
-  '90d': '90 day'
+const VERIFICATION_LABELS = {
+  '7d': '7 day verification',
+  '30d': '30 day verification',
+  '90d': '90 day verification'
 }
 
 const DEFAULT_ROSTER = { results: [], total: 0 }
+
+const MODERATION_SUCCESS_MESSAGES = {
+  warn: 'Warning recorded.',
+  timeout: 'Timeout issued.',
+  kick: 'Member kicked.',
+  ban: 'Member banned.',
+  note: 'Note added to timeline.'
+}
+
+const MODERATION_ACTION_LABELS = {
+  warn: 'Warned',
+  timeout: 'Timed out',
+  kick: 'Kicked',
+  ban: 'Banned',
+  note: 'Note added',
+  dm: 'Message sent'
+}
+
+const TIMEOUT_PRESETS = [
+  { value: 60, label: '1 minute' },
+  { value: 300, label: '5 minutes' },
+  { value: 900, label: '15 minutes' },
+  { value: 3600, label: '1 hour' },
+  { value: 21600, label: '6 hours' },
+  { value: 86400, label: '24 hours' },
+  { value: 604800, label: '7 days' }
+]
+
+const BAN_DELETE_WINDOWS = [
+  { value: 0, label: 'Keep messages' },
+  { value: 1, label: 'Past day' },
+  { value: 3, label: 'Past 3 days' },
+  { value: 7, label: 'Past 7 days' }
+]
 
 export default function PeoplePage() {
   const { user } = useAuth()
@@ -54,8 +90,24 @@ export default function PeoplePage() {
   const [selectedPerson, setSelectedPerson] = useState(null)
   const [drawerCheckins, setDrawerCheckins] = useState({ loading: false, data: [], error: null })
   const [drawerCases, setDrawerCases] = useState({ loading: false, data: [], error: null })
+  const [drawerActions, setDrawerActions] = useState({ loading: false, data: [], error: null })
   const [activeModal, setActiveModal] = useState(null)
   const [modalContext, setModalContext] = useState(null)
+
+  const verificationBacklog = useMemo(() => {
+    const results = Array.isArray(roster.data?.results) ? roster.data.results : []
+    return results.filter((person) => (person.status ?? '').toLowerCase() === 'not_onboarded').length
+  }, [roster.data])
+
+  const openModal = useCallback((name, context = null) => {
+    setActiveModal(name)
+    setModalContext(context)
+  }, [])
+
+  const closeModal = useCallback(() => {
+    setActiveModal(null)
+    setModalContext(null)
+  }, [])
 
   const permissions = useMemo(() => {
     const granted = new Set(user?.permissions ?? [])
@@ -73,6 +125,32 @@ export default function PeoplePage() {
   const refreshRoster = useCallback(() => {
     setReloadKey((value) => value + 1)
   }, [])
+
+  const executePersonAction = useCallback(
+    async ({ personId, payload }) => {
+      const response = await fetch(`/api/people/${personId}/actions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}))
+        throw new Error(errorBody?.error ?? `Request failed with status ${response.status}`)
+      }
+      const result = await response.json().catch(() => ({}))
+      if (result?.counters) {
+        setSummary({ loading: false, data: result.counters, error: null })
+      }
+      refreshRoster()
+      if (result?.person) {
+        setSelectedPerson((previous) =>
+          previous && previous.id === result.person.id ? { ...previous, ...result.person } : previous
+        )
+      }
+      return result
+    },
+    [refreshRoster]
+  )
 
   const handleExport = useCallback(
     (format) => {
@@ -117,6 +195,7 @@ export default function PeoplePage() {
       if (filters.search) {
         params.set('search', filters.search)
       }
+      params.set('limit', '250')
       if (selectedGuild?.id) {
         params.set('guildId', selectedGuild.id)
       }
@@ -125,7 +204,134 @@ export default function PeoplePage() {
         if (!response.ok) throw new Error(`Request failed with status ${response.status}`)
         const data = await response.json()
         if (!cancelled) {
-          setRoster({ loading: false, data: data ?? DEFAULT_ROSTER, error: null })
+          const rawItems = Array.isArray(data?.items)
+            ? data.items
+            : Array.isArray(data?.results)
+              ? data.results
+              : []
+
+          let results = rawItems.map((person) => {
+            const displayName =
+              person.displayName ?? person.username ?? person.name ?? `Member ${person.id ?? ''}`
+            const nextVerification = person.nextVerification ?? person.next_verification ?? null
+            const lastVerification = person.lastVerification ?? person.last_verification ?? null
+            return {
+              ...person,
+              id: person.id ?? person.memberId ?? person.member_id ?? person.discordId ?? person.discord_id,
+              displayName,
+              status: (person.status ?? 'active').toLowerCase(),
+              department: person.department ?? null,
+              title: person.title ?? null,
+              guildId: person.guildId ?? person.guild_id ?? selectedGuild?.id ?? null,
+              discordId: person.discordId ?? person.discord_id ?? null,
+              discordTag: person.discordTag ?? person.discord_tag ?? null,
+              source: 'roster',
+              checkins: {
+                next: nextVerification
+                  ? {
+                      cadence: nextVerification.cadence ?? nextVerification.type ?? '7d',
+                      dueAt: nextVerification.dueAt ?? nextVerification
+                    }
+                  : null,
+                lastCompleted: lastVerification
+                  ? {
+                      cadence: lastVerification.cadence ?? lastVerification.type ?? '7d',
+                      completedAt: lastVerification.completedAt ?? lastVerification
+                    }
+                  : null
+              }
+            }
+          })
+
+          const counters = data?.counters ?? null
+
+          if (selectedGuild?.id) {
+            const existingKeyMap = new Map()
+            const existingKeys = new Set()
+            results.forEach((person) => {
+              const key =
+                person.discordId ?? person.discord_id ?? person.externalId ?? person.id ?? null
+              if (key) {
+                const normalized = String(key)
+                existingKeys.add(normalized)
+                existingKeyMap.set(normalized, person)
+              }
+            })
+
+            try {
+              const directoryResponse = await fetch(
+                `/api/guilds/${selectedGuild.id}/members?limit=250`,
+                { signal: controller.signal }
+              )
+              if (directoryResponse.ok) {
+                const members = await directoryResponse.json()
+                const directoryEntries = []
+                for (const member of members) {
+                  const discordId = member?.id ? String(member.id) : null
+                  if (!discordId) {
+                    continue
+                  }
+                  if (existingKeys.has(discordId)) {
+                    const existing = existingKeyMap.get(discordId)
+                    if (existing) {
+                      existing.discordId = discordId
+                      existing.discordTag = member.tag ?? null
+                    }
+                    continue
+                  }
+                  directoryEntries.push({
+                    id: `discord:${discordId}`,
+                    discordId,
+                    discordTag: member.tag ?? null,
+                    guildId: selectedGuild.id,
+                    displayName:
+                      member.displayName ?? member.username ?? member.tag ?? `Member ${discordId}`,
+                    title: member.username ?? null,
+                    status: 'not_onboarded',
+                    department: null,
+                    timezone: null,
+                    location: null,
+                    email: null,
+                    tags: [],
+                    roles: [],
+                    joinedAt: member.joinedAt ?? null,
+                    lastSeenAt: null,
+                    checkins: {
+                      stats: { pending: 0, completed: 0, missed: 0 },
+                      next: null,
+                      lastCompleted: null,
+                      history: []
+                    },
+                    source: 'directory'
+                  })
+                }
+                results = results.concat(directoryEntries)
+              }
+            } catch (directoryError) {
+              if (directoryError.name !== 'AbortError') {
+                console.error('Failed to load guild directory', directoryError)
+              } else {
+                return
+              }
+            }
+          }
+
+          results.sort((a, b) => {
+            const left = (a.displayName ?? '').toLowerCase()
+            const right = (b.displayName ?? '').toLowerCase()
+            if (left < right) return -1
+            if (left > right) return 1
+            return 0
+          })
+
+          setRoster({
+            loading: false,
+            data: { results, total: results.length },
+            error: null
+          })
+          if (counters) {
+            setSummary({ loading: false, data: counters, error: null })
+          }
         }
       } catch (error) {
         if (error.name === 'AbortError') {
@@ -156,21 +362,30 @@ export default function PeoplePage() {
     async function loadDue() {
       setDueCheckins((previous) => ({ ...previous, loading: true, error: null }))
       try {
-        const response = await fetch('/api/people/checkins/due?withinHours=168&includeMissed=true', {
+        const response = await fetch('/api/people/checkins/upcoming?days=30&includeMissed=true', {
           signal: controller.signal
         })
         if (!response.ok) throw new Error(`Status ${response.status}`)
         const payload = await response.json()
+        const items = Array.isArray(payload)
+          ? payload.map((entry) => ({
+              personId: entry.person_id ?? entry.personId,
+              displayName: entry.name ?? entry.displayName ?? 'Member',
+              cadence: entry.type ?? entry.cadence ?? '7d',
+              dueAt: entry.due_at ?? entry.dueAt ?? null,
+              department: entry.department ?? null
+            }))
+          : []
         if (!cancelled) {
-          setDueCheckins({ loading: false, data: payload?.results ?? [], error: null })
+          setDueCheckins({ loading: false, data: items, error: null })
         }
       } catch (error) {
         if (error.name === 'AbortError') {
           return
         }
-        console.error('Failed to load due check-ins', error)
+        console.error('Failed to load upcoming verifications', error)
         if (!cancelled) {
-          setDueCheckins({ loading: false, data: [], error: 'Unable to load check-ins.' })
+          setDueCheckins({ loading: false, data: [], error: 'Unable to load verifications.' })
         }
       }
     }
@@ -273,7 +488,9 @@ export default function PeoplePage() {
   const handleSelectPerson = useCallback(
     (person) => {
       setSelectedPerson(person)
-      if (permissions.checkinsRead) {
+      const isDirectoryPerson = person.source === 'directory'
+
+      if (permissions.checkinsRead && !isDirectoryPerson) {
         setDrawerCheckins({ loading: true, data: [], error: null })
         fetch(`/api/people/${person.id}/checkins`)
           .then(async (response) => {
@@ -282,14 +499,14 @@ export default function PeoplePage() {
             setDrawerCheckins({ loading: false, data: data?.checkins ?? [], error: null })
           })
           .catch((error) => {
-            console.error('Failed to load checkins for person', error)
-            setDrawerCheckins({ loading: false, data: [], error: 'Unable to load check-ins.' })
+            console.error('Failed to load verifications for person', error)
+            setDrawerCheckins({ loading: false, data: [], error: 'Unable to load verifications.' })
           })
       } else {
         setDrawerCheckins({ loading: false, data: [], error: null })
       }
 
-      if (person.guildId) {
+      if (person.guildId && !isDirectoryPerson) {
         setDrawerCases({ loading: true, data: [], error: null })
         const params = new URLSearchParams({
           guildId: person.guildId,
@@ -315,14 +532,41 @@ export default function PeoplePage() {
       } else {
         setDrawerCases({ loading: false, data: [], error: null })
       }
+
+      if (permissions.manage && person.guildId && !isDirectoryPerson) {
+        setDrawerActions({ loading: true, data: [], error: null })
+        const params = new URLSearchParams()
+        params.set('guildId', person.guildId)
+        if (person.discordId ?? person.discord_id) {
+          params.set('memberId', person.discordId ?? person.discord_id)
+        }
+        fetch(`/api/people/${person.id}/actions/log?${params.toString()}`)
+          .then(async (response) => {
+            if (!response.ok) throw new Error(`Status ${response.status}`)
+            const payload = await response.json()
+            const items = Array.isArray(payload) ? payload : []
+            setDrawerActions({ loading: false, data: items, error: null })
+          })
+          .catch((error) => {
+            console.error('Failed to load moderation history', error)
+            setDrawerActions({
+              loading: false,
+              data: [],
+              error: 'Unable to load moderation history.'
+            })
+          })
+      } else {
+        setDrawerActions({ loading: false, data: [], error: null })
+      }
     },
-    [permissions.checkinsRead]
+    [permissions.checkinsRead, permissions.manage]
   )
 
   const handleCloseDrawer = useCallback(() => {
     setSelectedPerson(null)
     setDrawerCheckins({ loading: false, data: [], error: null })
     setDrawerCases({ loading: false, data: [], error: null })
+    setDrawerActions({ loading: false, data: [], error: null })
   }, [])
 
   const handleRecordCheckin = useCallback(
@@ -345,32 +589,67 @@ export default function PeoplePage() {
             previous && previous.id === data.person.id ? { ...previous, ...data.person } : previous
           )
         }
-        setMessage({ type: 'success', text: 'Check-in updated.' })
+        setMessage({ type: 'success', text: 'Verification updated.' })
         refreshRoster()
       } catch (error) {
-        console.error('Failed to update check-in', error)
-        setMessage({ type: 'error', text: 'Unable to update check-in.' })
+        console.error('Failed to update verification', error)
+        setMessage({ type: 'error', text: 'Unable to update verification.' })
       }
     },
     [permissions.checkinsUpdate, refreshRoster]
   )
 
-  const openModal = useCallback((name, context = null) => {
-    setActiveModal(name)
-    setModalContext(context)
-  }, [])
-
-  const closeModal = useCallback(() => {
-    setActiveModal(null)
-    setModalContext(null)
-  }, [])
+  const handleOpenPersonAction = useCallback(
+    (action, person) => {
+      if (!person) {
+        return
+      }
+      if (action === 'directory:add') {
+        openModal('add', {
+          defaults: {
+            displayName: person.displayName,
+            title: person.title ?? null,
+            status: 'onboarding',
+            guildId: person.guildId ?? selectedGuild?.id ?? null,
+            discordId: person.discordId ?? person.id,
+            discordTag: person.discordTag ?? null
+          }
+        })
+        return
+      }
+      if (action === 'announce') {
+        handleAnnounce(person)
+        return
+      }
+      if (action === 'rolesync') {
+        handleRoleSync(person)
+        return
+      }
+      if (action === 'offboard') {
+        handleOpenOffboard(person)
+        return
+      }
+      if (['warn', 'timeout', 'kick', 'ban', 'note'].includes(action)) {
+        openModal('moderation_action', {
+          person,
+          action,
+          guildId: person.guildId ?? selectedGuild?.id ?? null,
+          memberId: person.discordId ?? person.id ?? null
+        })
+        return
+      }
+      setActiveModal(action)
+      setModalContext({ person })
+    },
+    [handleAnnounce, handleOpenOffboard, handleRoleSync, openModal, selectedGuild?.id]
+  )
 
   return (
     <div className="page people-page">
       <header className="page__header">
         <div>
           <h1>People</h1>
-          <p>Track onboarding, departments, and upcoming check-ins.</p>
+          <p>Track onboarding, departments, and upcoming verifications.</p>
         </div>
         <div className="page__header-actions">
           {permissions.manage && (
@@ -399,18 +678,40 @@ export default function PeoplePage() {
 
       <section className="panel people-summary" aria-live="polite">
         {summary.loading ? (
-          <p>Calculating roster snapshotâ€¦</p>
-        ) : summary.error ? (
-          <p className="text-danger">{summary.error}</p>
-        ) : summary.data ? (
-          <div className="summary-grid">
-            <SummaryMetric label="Total" value={summary.data.total} />
-            <SummaryMetric label="Active" value={summary.data.active} />
-            <SummaryMetric label="Onboarding" value={summary.data.onboarding} />
-            <SummaryMetric label="Offboarded" value={summary.data.offboarded} />
-          </div>
-        ) : null}
-      </section>
+          <p>Calculating roster snapshot�</p>
+      ) : summary.error ? (
+        <p className="text-danger">{summary.error}</p>
+      ) : summary.data ? (
+        <div className="summary-grid">
+          <SummaryMetric label="Total" value={summary.data.total} />
+          <SummaryMetric label="Active" value={summary.data.active} />
+          <SummaryMetric label="Onboarding" value={summary.data.onboarding} />
+          <SummaryMetric label="Offboarded" value={summary.data.offboarded} />
+        </div>
+      ) : null}
+    </section>
+
+    {verificationBacklog > 0 && (
+      <div className="inline-alert inline-alert--info verification-alert" role="status">
+        <span>
+          {verificationBacklog === 1
+            ? 'There is 1 member waiting for verification.'
+            : `There are ${verificationBacklog} members waiting for verification.`}
+        </span>
+        <button
+          type="button"
+          className="button button--ghost"
+          onClick={() =>
+            setFilters((previous) => ({
+              ...previous,
+              status: 'not_onboarded'
+            }))
+          }
+        >
+          View queue
+        </button>
+      </div>
+    )}
 
       <PeopleToolbar filters={filters} onChange={setFilters} />
 
@@ -425,7 +726,7 @@ export default function PeoplePage() {
 
       <section className="panel roster-panel" aria-live="polite">
         {roster.loading ? (
-          <div className="table-placeholder">Loading rosterâ€¦</div>
+          <div className="table-placeholder">Loading roster�</div>
         ) : roster.error ? (
           <div className="table-placeholder table-placeholder--error">
             <p>{roster.error}</p>
@@ -447,8 +748,8 @@ export default function PeoplePage() {
                 <th scope="col">Name</th>
                 <th scope="col">Department</th>
                 <th scope="col">Status</th>
-                <th scope="col">Next check-in</th>
-                <th scope="col">Last check-in</th>
+                <th scope="col">Next verification</th>
+                <th scope="col">Last verification</th>
                 <th scope="col" className="people-table__actions-heading">
                   Actions
                 </th>
@@ -463,39 +764,18 @@ export default function PeoplePage() {
                       {person.title && <span className="people-table__sub">{person.title}</span>}
                     </button>
                   </td>
-                  <td>{person.department ?? 'â€”'}</td>
+                  <td>{person.department ?? '�'}</td>
                   <td>
                     <StatusBadge status={person.status} />
                   </td>
-                  <td>{formatCheckin(person.checkins?.next)}</td>
-                  <td>{formatCompleted(person.checkins?.lastCompleted)}</td>
+                  <td>{formatVerification(person.checkins?.next)}</td>
+                  <td>{formatVerificationCompleted(person.checkins?.lastCompleted)}</td>
                   <td>
-                    <div className="people-table__actions">
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        disabled={!permissions.announce}
-                        onClick={() => handleAnnounce(person)}
-                      >
-                        Announce
-                      </button>
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        disabled={!permissions.rolesync}
-                        onClick={() => handleRoleSync(person)}
-                      >
-                        Role sync
-                      </button>
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        disabled={!permissions.offboard}
-                        onClick={() => handleOpenOffboard(person)}
-                      >
-                        Offboard
-                      </button>
-                    </div>
+                    <PersonActionsSelect
+                      person={person}
+                      permissions={permissions}
+                      onSelect={handleOpenPersonAction}
+                    />
                   </td>
                 </tr>
               ))}
@@ -507,11 +787,11 @@ export default function PeoplePage() {
       {permissions.checkinsRead && (
         <section className="panel due-checkins" aria-live="polite">
           <div className="section-title">
-            <h2>Upcoming check-ins</h2>
+            <h2>Upcoming verifications</h2>
             <p>7/30/90 day follow-ups due soon.</p>
           </div>
           {dueCheckins.loading ? (
-            <p>Checking upcoming touchpointsâ€¦</p>
+            <p>Checking upcoming verifications�</p>
           ) : dueCheckins.error ? (
             <p className="text-danger">{dueCheckins.error}</p>
           ) : dueCheckins.data.length === 0 ? (
@@ -522,10 +802,10 @@ export default function PeoplePage() {
                 <li key={`${entry.personId}-${entry.cadence}`}>
                   <div>
                     <strong>{entry.displayName}</strong>
-                    <span>{CHECKIN_LABELS[entry.cadence] ?? entry.cadence} check-in</span>
+                    <span>{VERIFICATION_LABELS[entry.cadence] ?? entry.cadence} verification</span>
                   </div>
                   <div>
-                    <span>{formatDue(entry.dueAt)}</span>
+                    <span>{formatVerificationDue(entry.dueAt)}</span>
                     {permissions.checkinsUpdate && (
                       <button
                         type="button"
@@ -548,14 +828,18 @@ export default function PeoplePage() {
           person={selectedPerson}
           checkins={drawerCheckins}
           cases={drawerCases}
+          actions={drawerActions}
           onClose={handleCloseDrawer}
           onRecordCheckin={handleRecordCheckin}
           canUpdateCheckins={permissions.checkinsUpdate}
+          canManageActions={permissions.manage}
         />
       )}
 
       {activeModal === 'add' && (
         <AddPersonModal
+          defaults={modalContext?.defaults}
+          defaultGuildId={selectedGuild?.id ?? null}
           onClose={closeModal}
           onSuccess={() => {
             closeModal()
@@ -588,6 +872,108 @@ export default function PeoplePage() {
         />
       )}
 
+      {activeModal === 'moderation_action' && modalContext?.person && (
+        <ModerationActionModal
+          person={modalContext.person}
+          action={modalContext.action}
+          defaultGuildId={modalContext.guildId ?? selectedGuild?.id ?? null}
+          defaultMemberId={modalContext.memberId ?? modalContext.person.discordId ?? modalContext.person.id}
+          onClose={closeModal}
+          onSubmit={async (payload) => {
+            try {
+              await executePersonAction({ personId: modalContext.person.id, payload })
+              const successText =
+                MODERATION_SUCCESS_MESSAGES[modalContext.action] ?? 'Action completed.'
+              setMessage({ type: 'success', text: successText })
+              closeModal()
+              refreshRoster()
+            } catch (error) {
+              throw error
+            }
+          }}
+        />
+      )}
+
+      {activeModal === 'dm' && modalContext?.person && (
+        <DmModal
+          person={modalContext.person}
+          onClose={closeModal}
+          onSubmit={async (payload) => {
+            try {
+              await executePersonAction({ personId: modalContext.person.id, payload })
+              setMessage({ type: 'success', text: 'Message sent via DreamGen.' })
+              closeModal()
+            } catch (error) {
+              throw error
+            }
+          }}
+        />
+      )}
+
+      {activeModal === 'schedule_checkin' && modalContext?.person && (
+        <ScheduleCheckinModal
+          person={modalContext.person}
+          onClose={closeModal}
+          onSubmit={async (payload) => {
+            try {
+              await executePersonAction({ personId: modalContext.person.id, payload })
+              setMessage({ type: 'success', text: 'Verification scheduled.' })
+              closeModal()
+            } catch (error) {
+              throw error
+            }
+          }}
+        />
+      )}
+
+      {activeModal === 'assign_department' && modalContext?.person && (
+        <AssignDepartmentModal
+          person={modalContext.person}
+          onClose={closeModal}
+          onSubmit={async (payload) => {
+            try {
+              await executePersonAction({ personId: modalContext.person.id, payload })
+              setMessage({ type: 'success', text: 'Department updated.' })
+              closeModal()
+            } catch (error) {
+              throw error
+            }
+          }}
+        />
+      )}
+
+      {activeModal === 'open_case' && modalContext?.person && (
+        <OpenCaseModal
+          person={modalContext.person}
+          onClose={closeModal}
+          onSubmit={async (payload) => {
+            try {
+              await executePersonAction({ personId: modalContext.person.id, payload })
+              setMessage({ type: 'success', text: 'Case opened for this person.' })
+              closeModal()
+            } catch (error) {
+              throw error
+            }
+          }}
+        />
+      )}
+
+      {activeModal === 'set_status' && modalContext?.person && (
+        <SetStatusModal
+          person={modalContext.person}
+          onClose={closeModal}
+          onSubmit={async (payload) => {
+            try {
+              await executePersonAction({ personId: modalContext.person.id, payload })
+              setMessage({ type: 'success', text: 'Status updated.' })
+              closeModal()
+            } catch (error) {
+              throw error
+            }
+          }}
+        />
+      )}
+
       {activeModal === 'offboard' && modalContext?.person && (
         <OffboardModal
           person={modalContext.person}
@@ -611,7 +997,7 @@ function PeopleToolbar({ filters, onChange }) {
         <input
           id="people-search"
           type="search"
-          placeholder="Search peopleâ€¦"
+          placeholder="Search people..."
           value={filters.search}
           onChange={(event) => onChange({ ...filters, search: event.target.value })}
         />
@@ -656,28 +1042,93 @@ function SummaryMetric({ label, value }) {
   )
 }
 
+function PersonActionsSelect({ person, permissions, onSelect }) {
+  if (person?.source === 'directory') {
+    return (
+      <button
+        type="button"
+        className="button button--ghost"
+        onClick={() => onSelect('directory:add', person)}
+      >
+        Add to roster
+      </button>
+    )
+  }
+
+  const actions = [
+    { value: 'warn', label: 'Warn' },
+    { value: 'timeout', label: 'Timeout' },
+    { value: 'kick', label: 'Kick' },
+    { value: 'ban', label: 'Ban' },
+    { value: 'note', label: 'Add note' },
+    { value: 'dm', label: 'Send DM' },
+    { value: 'schedule_checkin', label: 'Schedule verification' },
+    { value: 'assign_department', label: 'Assign department' },
+    { value: 'open_case', label: 'Open case' },
+    { value: 'set_status', label: 'Set status' }
+  ]
+
+  if (permissions.announce) {
+    actions.push({ value: 'announce', label: 'Announce onboarding' })
+  }
+  if (permissions.rolesync) {
+    actions.push({ value: 'rolesync', label: 'Sync roles' })
+  }
+  if (permissions.offboard) {
+    actions.push({ value: 'offboard', label: 'Offboard' })
+  }
+
+  if (!actions.length) {
+    return <span className="text-muted">No actions available</span>
+  }
+
+  return (
+    <select
+      className="people-actions__select"
+      defaultValue=""
+      onChange={(event) => {
+        const { value } = event.target
+        if (value) {
+          onSelect(value, person)
+        }
+        event.target.value = ''
+      }}
+    >
+      <option value="" disabled>
+        Choose action...
+      </option>
+      {actions.map((action) => (
+        <option key={action.value} value={action.value}>
+          {action.label}
+        </option>
+      ))}
+    </select>
+  )
+}
 function StatusBadge({ status }) {
   const label = STATUS_LABELS[status] ?? status
   return <span className={`status-badge status-badge--${status ?? 'unknown'}`}>{label ?? 'Unknown'}</span>
 }
 
-function formatCheckin(entry) {
+function formatVerification(entry) {
   if (!entry?.dueAt) {
-    return 'â€”'
+    return 'N/A'
   }
-  return `${CHECKIN_LABELS[entry.cadence] ?? entry.cadence}: ${formatDue(entry.dueAt)}`
+  return `${VERIFICATION_LABELS[entry.cadence] ?? entry.cadence}: ${formatVerificationDue(entry.dueAt)}`
 }
 
-function formatCompleted(entry) {
+
+function formatVerificationCompleted(entry) {
   if (!entry?.completedAt) {
-    return 'â€”'
+    return 'N/A'
   }
-  return `${CHECKIN_LABELS[entry.cadence] ?? entry.cadence}: ${formatDate(entry.completedAt)}`
+  return `${VERIFICATION_LABELS[entry.cadence] ?? entry.cadence}: ${formatVerificationDate(entry.completedAt)}`
 }
 
-function formatDate(value) {
+
+function formatVerificationDate(value) {
   if (!value) {
-    return 'â€”'
+    return 'N/A'
   }
   try {
     return DATE_FORMATTER.format(new Date(value))
@@ -686,9 +1137,10 @@ function formatDate(value) {
   }
 }
 
-function formatDue(value) {
+
+function formatVerificationDue(value) {
   if (!value) {
-    return 'â€”'
+    return 'N/A'
   }
   try {
     const date = new Date(value)
@@ -707,7 +1159,17 @@ function formatDue(value) {
   }
 }
 
-function ProfileDrawer({ person, checkins, cases, onClose, onRecordCheckin, canUpdateCheckins }) {
+
+function ProfileDrawer({
+  person,
+  checkins,
+  cases,
+  actions,
+  onClose,
+  onRecordCheckin,
+  canUpdateCheckins,
+  canManageActions
+}) {
   return (
     <aside className="profile-drawer" role="complementary" aria-label={`${person.displayName} profile`}>
       <header className="profile-drawer__header">
@@ -725,33 +1187,33 @@ function ProfileDrawer({ person, checkins, cases, onClose, onRecordCheckin, canU
         <h3>Details</h3>
         <dl className="profile-drawer__list">
           <DetailRow label="Status" value={<StatusBadge status={person.status} />} />
-          <DetailRow label="Location" value={person.location ?? 'â€”'} />
-          <DetailRow label="Timezone" value={person.timezone ?? 'â€”'} />
-          <DetailRow label="Email" value={person.email ?? 'â€”'} />
-          <DetailRow label="Joined" value={formatDate(person.joinedAt)} />
-          <DetailRow label="Last seen" value={formatDate(person.lastSeenAt)} />
-          <DetailRow label="Tags" value={person.tags?.length ? person.tags.join(', ') : 'â€”'} />
+          <DetailRow label="Location" value={person.location ?? '�'} />
+          <DetailRow label="Timezone" value={person.timezone ?? '�'} />
+          <DetailRow label="Email" value={person.email ?? '�'} />
+          <DetailRow label="Joined" value={formatVerificationDate(person.joinedAt)} />
+          <DetailRow label="Last seen" value={formatVerificationDate(person.lastSeenAt)} />
+          <DetailRow label="Tags" value={person.tags?.length ? person.tags.join(', ') : '�'} />
         </dl>
       </section>
 
       <section className="profile-drawer__section">
-        <h3>Check-ins</h3>
+        <h3>Verifications</h3>
         {checkins.loading ? (
-          <p>Loading check-insâ€¦</p>
+          <p>Loading verifications�</p>
         ) : checkins.error ? (
           <p className="text-danger">{checkins.error}</p>
         ) : checkins.data.length === 0 ? (
-          <p>No check-in history yet.</p>
+          <p>No verification history yet.</p>
         ) : (
           <ul className="drawer-checkin-list">
             {checkins.data.map((entry) => (
               <li key={entry.id}>
                 <div>
-                  <strong>{CHECKIN_LABELS[entry.cadence] ?? entry.cadence}</strong>
+                  <strong>{VERIFICATION_LABELS[entry.cadence] ?? entry.cadence}</strong>
                   <span className={`status-badge status-badge--${entry.status}`}>{entry.status}</span>
                 </div>
                 <div>
-                  <span>{entry.status === 'completed' ? formatDate(entry.completedAt) : formatDue(entry.dueAt)}</span>
+                  <span>{entry.status === 'completed' ? formatVerificationDate(entry.completedAt) : formatVerificationDue(entry.dueAt)}</span>
                   {canUpdateCheckins && entry.status === 'pending' && (
                     <button
                       type="button"
@@ -771,7 +1233,7 @@ function ProfileDrawer({ person, checkins, cases, onClose, onRecordCheckin, canU
       <section className="profile-drawer__section">
         <h3>Recent cases</h3>
         {cases.loading ? (
-          <p>Loading case historyâ€¦</p>
+          <p>Loading case history�</p>
         ) : cases.error ? (
           <p className="text-danger">{cases.error}</p>
         ) : cases.data.length === 0 ? (
@@ -784,12 +1246,47 @@ function ProfileDrawer({ person, checkins, cases, onClose, onRecordCheckin, canU
                   <strong>{entry.subject ?? `Case #${entry.id}`}</strong>
                   <span>{entry.status}</span>
                 </div>
-                <span>{formatDate(entry.updatedAt ?? entry.createdAt)}</span>
+                <span>{formatVerificationDate(entry.updatedAt ?? entry.createdAt)}</span>
               </li>
             ))}
           </ul>
         )}
       </section>
+
+      {canManageActions ? (
+        <section className="profile-drawer__section">
+          <h3>Moderation history</h3>
+          {actions.loading ? (
+            <p>Loading moderation history…</p>
+          ) : actions.error ? (
+            <p className="text-danger">{actions.error}</p>
+          ) : actions.data.length === 0 ? (
+            <p>No moderation actions recorded for this member.</p>
+          ) : (
+            <ul className="drawer-action-list">
+              {actions.data.map((entry) => (
+                <li key={entry.id}>
+                  <div>
+                    <strong>{MODERATION_ACTION_LABELS[entry.action] ?? entry.action}</strong>
+                    <span>{formatVerificationDate(entry.createdAt)}</span>
+                  </div>
+                  {entry.reason ? <p>{entry.reason}</p> : null}
+                  <footer>
+                    {entry.actorTag ? <span>By {entry.actorTag}</span> : null}
+                    {entry.durationSec ? <span>{formatDuration(entry.durationSec)}</span> : null}
+                    {entry.dmUser ? <span>Member notified</span> : null}
+                    {entry.evidenceUrl ? (
+                      <a href={entry.evidenceUrl} target="_blank" rel="noopener noreferrer">
+                        Evidence
+                      </a>
+                    ) : null}
+                  </footer>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
     </aside>
   )
 }
@@ -803,7 +1300,7 @@ function DetailRow({ label, value }) {
   )
 }
 
-function AddPersonModal({ onClose, onSuccess }) {
+function AddPersonModal({ onClose, onSuccess, defaults = {}, defaultGuildId = null }) {
   const [form, setForm] = useState({
     displayName: '',
     title: '',
@@ -817,6 +1314,43 @@ function AddPersonModal({ onClose, onSuccess }) {
   const [pending, setPending] = useState(false)
   const [error, setError] = useState(null)
 
+  const metadata = useMemo(
+    () => ({
+      guildId: defaults.guildId ?? defaultGuildId ?? null,
+      discordId: defaults.discordId ?? defaults.discord_id ?? null,
+      discordTag: defaults.discordTag ?? defaults.discord_tag ?? null
+    }),
+    [defaults, defaultGuildId]
+  )
+
+  useEffect(() => {
+    const normalizeDateInput = (value) => {
+      if (!value) {
+        return ''
+      }
+      try {
+        const date = new Date(value)
+        if (Number.isNaN(date.getTime())) {
+          return ''
+        }
+        return date.toISOString().slice(0, 10)
+      } catch (_error) {
+        return ''
+      }
+    }
+
+    setForm({
+      displayName: defaults.displayName ?? defaults.name ?? '',
+      title: defaults.title ?? defaults.username ?? '',
+      department: defaults.department ?? '',
+      status: defaults.status ?? 'active',
+      email: defaults.email ?? '',
+      location: defaults.location ?? '',
+      timezone: defaults.timezone ?? '',
+      joinedAt: normalizeDateInput(defaults.joinedAt ?? defaults.joined_at ?? '')
+    })
+  }, [defaults])
+
   const handleSubmit = async (event) => {
     event.preventDefault()
     setPending(true)
@@ -826,11 +1360,14 @@ function AddPersonModal({ onClose, onSuccess }) {
         displayName: form.displayName,
         title: form.title || null,
         department: form.department || null,
-        status: form.status,
+        status: form.status || 'active',
         email: form.email || null,
         location: form.location || null,
         timezone: form.timezone || null,
-        joinedAt: form.joinedAt || null
+        joinedAt: form.joinedAt ? new Date(form.joinedAt).toISOString() : null,
+        discordId: metadata.discordId,
+        discordTag: metadata.discordTag,
+        guildId: metadata.guildId
       }
       const response = await fetch('/api/people', {
         method: 'POST',
@@ -914,7 +1451,7 @@ function AddPersonModal({ onClose, onSuccess }) {
             Cancel
           </button>
           <button type="submit" className="button button--primary" disabled={pending}>
-            {pending ? 'Savingâ€¦' : 'Save'}
+            {pending ? 'Saving�' : 'Save'}
           </button>
         </footer>
       </form>
@@ -970,7 +1507,7 @@ function ImportRosterModal({ onClose, onSuccess }) {
             Cancel
           </button>
           <button type="submit" className="button button--primary" disabled={pending || !text.trim()}>
-            {pending ? 'Importingâ€¦' : 'Import'}
+            {pending ? 'Importing�' : 'Import'}
           </button>
         </footer>
       </form>
@@ -983,19 +1520,19 @@ function OnboardingModal({ onClose, checkins, onMark, canUpdateCheckins }) {
   return (
     <Modal title="Onboarding checklist" onClose={onClose}>
       {checkins.loading ? (
-        <p>Loading upcoming onboarding tasksâ€¦</p>
+        <p>Loading upcoming onboarding tasks�</p>
       ) : checkins.error ? (
         <p className="text-danger">{checkins.error}</p>
       ) : entries.length === 0 ? (
-        <p>All onboarding check-ins are up to date.</p>
+        <p>All onboarding verifications are up to date.</p>
       ) : (
         <ul className="modal-checkin-list">
           {entries.map((entry) => (
             <li key={`${entry.personId}-${entry.cadence}`}>
               <div>
                 <strong>{entry.displayName}</strong>
-                <span>{CHECKIN_LABELS[entry.cadence] ?? entry.cadence} check-in</span>
-                <span>{formatDue(entry.dueAt)}</span>
+                <span>{VERIFICATION_LABELS[entry.cadence] ?? entry.cadence} verification</span>
+                <span>{formatVerificationDue(entry.dueAt)}</span>
               </div>
               {canUpdateCheckins && (
                 <button
@@ -1047,7 +1584,7 @@ function OffboardModal({ person, onClose, onSuccess }) {
   return (
     <Modal title={`Offboard ${person.displayName}`} onClose={onClose}>
       <form className="modal-form" onSubmit={handleSubmit}>
-        <p className="modal-form__help">This will mark the person as offboarded and close any pending check-ins.</p>
+        <p className="modal-form__help">This will mark the person as offboarded and close any pending verifications.</p>
         <label>
           Reason (optional)
           <textarea rows={3} value={reason} onChange={(event) => setReason(event.target.value)} />
@@ -1058,7 +1595,557 @@ function OffboardModal({ person, onClose, onSuccess }) {
             Cancel
           </button>
           <button type="submit" className="button button--primary" disabled={pending}>
-            {pending ? 'Offboardingâ€¦' : 'Confirm'}
+            {pending ? 'Offboarding�' : 'Confirm'}
+          </button>
+        </footer>
+      </form>
+    </Modal>
+  )
+}
+
+function formatDuration(value) {
+  const seconds = Number(value) || 0
+  if (seconds <= 0) {
+    return null
+  }
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 1) {
+    return `${seconds}s`
+  }
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  if (hours === 0) {
+    return `${minutes}m`
+  }
+  if (remainingMinutes === 0) {
+    return `${hours}h`
+  }
+  return `${hours}h ${remainingMinutes}m`
+}
+
+function ModerationActionModal({ person, action, defaultGuildId, defaultMemberId, onClose, onSubmit }) {
+  const [reason, setReason] = useState('')
+  const [dmUser, setDmUser] = useState(action !== 'note')
+  const [duration, setDuration] = useState(TIMEOUT_PRESETS[2].value)
+  const [deleteDays, setDeleteDays] = useState(0)
+  const [evidenceUrl, setEvidenceUrl] = useState('')
+  const [message, setMessage] = useState('')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState(null)
+
+  const isTimeout = action === 'timeout'
+  const isBan = action === 'ban'
+  const allowDm = action !== 'note'
+
+  const titles = {
+    warn: `Warn ${person.displayName}`,
+    timeout: `Timeout ${person.displayName}`,
+    kick: `Kick ${person.displayName}`,
+    ban: `Ban ${person.displayName}`,
+    note: `Add note for ${person.displayName}`
+  }
+
+  const descriptions = {
+    warn: 'Send a moderated warning and optionally DM the member.',
+    timeout: 'Restrict the member from chatting or joining voice for the selected duration.',
+    kick: 'Remove the member from the guild. They can rejoin with an invite.',
+    ban: 'Ban the member from the guild and optionally delete recent messages.',
+    note: 'Add a private note to the member history without notifying them.'
+  }
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    const trimmedReason = reason.trim()
+    if (!trimmedReason) {
+      setError('Reason is required.')
+      return
+    }
+    if (allowDm && dmUser && !message.trim()) {
+      setError('Message is required when DMing the member.')
+      return
+    }
+    setPending(true)
+    setError(null)
+    try {
+      const payload = {
+        action,
+        reason: trimmedReason,
+        guildId: defaultGuildId ?? null,
+        memberId: defaultMemberId ?? null,
+        dmUser: allowDm ? dmUser : false,
+        evidenceUrl: evidenceUrl.trim() ? evidenceUrl.trim() : null
+      }
+      if (allowDm && dmUser && message.trim()) {
+        payload.message = message.trim()
+      }
+      if (isTimeout) {
+        payload.durationSec = Number(duration) || 0
+      }
+      if (isBan) {
+        payload.deleteMessageDays = Number(deleteDays) || 0
+      }
+      if (action === 'note') {
+        payload.dmUser = false
+      }
+      await onSubmit(payload)
+    } catch (submissionError) {
+      setError(submissionError.message ?? 'Unable to submit action.')
+      setPending(false)
+      return
+    }
+  }
+
+  return (
+    <Modal title={titles[action] ?? 'Moderation action'} onClose={onClose}>
+      <form className="modal-form" onSubmit={handleSubmit}>
+        <p className="modal-form__help">{descriptions[action] ?? 'Provide context before confirming.'}</p>
+        <label>
+          Reason
+          <textarea
+            rows={3}
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why are you taking this action?"
+          />
+        </label>
+        {isTimeout ? (
+          <label>
+            Duration
+            <select value={duration} onChange={(event) => setDuration(Number(event.target.value))}>
+              {TIMEOUT_PRESETS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {isBan ? (
+          <label>
+            Delete recent messages
+            <select value={deleteDays} onChange={(event) => setDeleteDays(Number(event.target.value))}>
+              {BAN_DELETE_WINDOWS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <label>
+          Evidence URL (optional)
+          <input
+            type="url"
+            value={evidenceUrl}
+            onChange={(event) => setEvidenceUrl(event.target.value)}
+            placeholder="https://"
+          />
+        </label>
+        {allowDm ? (
+          <label className="checkbox-row">
+            <input type="checkbox" checked={dmUser} onChange={(event) => setDmUser(event.target.checked)} />
+            Notify member via DM
+          </label>
+        ) : null}
+        {allowDm && dmUser ? (
+          <label>
+            DM message
+            <textarea
+              rows={3}
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder={`Hi ${person.displayName}, we're following up on …`}
+            />
+          </label>
+        ) : null}
+        {error && <p className="text-danger">{error}</p>}
+        <footer className="modal-footer">
+          <button type="button" className="button button--ghost" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button type="submit" className="button button--primary" disabled={pending}>
+            {pending ? 'Saving…' : 'Confirm'}
+          </button>
+        </footer>
+      </form>
+    </Modal>
+  )
+}
+
+function DmModal({ person, onClose, onSubmit }) {
+  const [targetType, setTargetType] = useState('user')
+  const [targetId, setTargetId] = useState('')
+  const [message, setMessage] = useState(`Hi ${person.displayName},`)
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState(null)
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    if (!targetId.trim()) {
+      setError('Target ID is required.')
+      return
+    }
+    if (!message.trim()) {
+      setError('Message cannot be empty.')
+      return
+    }
+    setPending(true)
+    setError(null)
+    try {
+      await onSubmit({
+        action: 'dm',
+        ...(targetType === 'channel' ? { channel: targetId.trim() } : { user: targetId.trim() }),
+        message: message.trim()
+      })
+    } catch (submissionError) {
+      setError(submissionError.message ?? 'Unable to send message.')
+      setPending(false)
+      return
+    }
+  }
+
+  return (
+    <Modal title={`Send DM to ${person.displayName}`} onClose={onClose}>
+      <form className="modal-form" onSubmit={handleSubmit}>
+        <label>
+          Target type
+          <select value={targetType} onChange={(event) => setTargetType(event.target.value)}>
+            <option value="user">User ID</option>
+            <option value="channel">Channel ID</option>
+          </select>
+        </label>
+        <label>
+          Target ID
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="\d+"
+            placeholder="Enter Snowflake ID"
+            value={targetId}
+            onChange={(event) => setTargetId(event.target.value)}
+          />
+        </label>
+        <label>
+          Message
+          <textarea rows={5} value={message} onChange={(event) => setMessage(event.target.value)} />
+        </label>
+        {error && <p className="text-danger">{error}</p>}
+        <footer className="modal-footer">
+          <button type="button" className="button button--ghost" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button type="submit" className="button button--primary" disabled={pending}>
+            {pending ? 'Sending�' : 'Send message'}
+          </button>
+        </footer>
+      </form>
+    </Modal>
+  )
+}
+
+function ScheduleCheckinModal({ person, onClose, onSubmit }) {
+  const [cadence, setCadence] = useState('7d')
+  const [customDate, setCustomDate] = useState(() => {
+    const date = new Date()
+    date.setDate(date.getDate() + 3)
+    return date.toISOString().slice(0, 16)
+  })
+  const [notes, setNotes] = useState('')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState(null)
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    const payload = {
+      action: 'schedule_checkin',
+      type: cadence,
+      due_at: cadence === 'custom' ? new Date(customDate).toISOString() : null,
+      notes: notes.trim() || null
+    }
+    if (cadence === 'custom' && (!customDate || Number.isNaN(new Date(customDate).getTime()))) {
+      setError('Select a valid due date.')
+      return
+    }
+    setPending(true)
+    setError(null)
+    try {
+      await onSubmit(payload)
+    } catch (submissionError) {
+      setError(submissionError.message ?? 'Unable to schedule verification.')
+      setPending(false)
+      return
+    }
+  }
+
+  return (
+    <Modal title={`Schedule verification for ${person.displayName}`} onClose={onClose}>
+      <form className="modal-form" onSubmit={handleSubmit}>
+        <fieldset>
+          <legend>Cadence</legend>
+          <label>
+            <input
+              type="radio"
+              name="checkin-cadence"
+              value="7d"
+              checked={cadence === '7d'}
+              onChange={() => setCadence('7d')}
+            />
+            7 day verification
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="checkin-cadence"
+              value="30d"
+              checked={cadence === '30d'}
+              onChange={() => setCadence('30d')}
+            />
+            30 day verification
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="checkin-cadence"
+              value="90d"
+              checked={cadence === '90d'}
+              onChange={() => setCadence('90d')}
+            />
+            90 day verification
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="checkin-cadence"
+              value="custom"
+              checked={cadence === 'custom'}
+              onChange={() => setCadence('custom')}
+            />
+            Custom date
+          </label>
+        </fieldset>
+        {cadence === 'custom' && (
+          <label>
+            Due at
+            <input
+              type="datetime-local"
+              value={customDate}
+              onChange={(event) => setCustomDate(event.target.value)}
+            />
+          </label>
+        )}
+        <label>
+          Notes (optional)
+          <textarea rows={3} value={notes} onChange={(event) => setNotes(event.target.value)} />
+        </label>
+        {error && <p className="text-danger">{error}</p>}
+        <footer className="modal-footer">
+          <button type="button" className="button button--ghost" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button type="submit" className="button button--primary" disabled={pending}>
+            {pending ? 'Scheduling�' : 'Schedule verification'}
+          </button>
+        </footer>
+      </form>
+    </Modal>
+  )
+}
+
+function AssignDepartmentModal({ person, onClose, onSubmit }) {
+  const [department, setDepartment] = useState(person.department ?? '')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState(null)
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    if (!department.trim()) {
+      setError('Department name is required.')
+      return
+    }
+    setPending(true)
+    setError(null)
+    try {
+      await onSubmit({
+        action: 'assign_department',
+        department: department.trim()
+      })
+    } catch (submissionError) {
+      setError(submissionError.message ?? 'Unable to assign department.')
+      setPending(false)
+      return
+    }
+  }
+
+  return (
+    <Modal title={`Assign department for ${person.displayName}`} onClose={onClose}>
+      <form className="modal-form" onSubmit={handleSubmit}>
+        <label>
+          Department
+          <input
+            type="text"
+            value={department}
+            onChange={(event) => setDepartment(event.target.value)}
+            placeholder="e.g. Support"
+          />
+        </label>
+        {error && <p className="text-danger">{error}</p>}
+        <footer className="modal-footer">
+          <button type="button" className="button button--ghost" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button type="submit" className="button button--primary" disabled={pending}>
+            {pending ? 'Saving�' : 'Save changes'}
+          </button>
+        </footer>
+      </form>
+    </Modal>
+  )
+}
+
+function OpenCaseModal({ person, onClose, onSubmit }) {
+  const [category, setCategory] = useState('conduct')
+  const [title, setTitle] = useState('')
+  const [notes, setNotes] = useState('')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState(null)
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    if (!title.trim()) {
+      setError('Title is required.')
+      return
+    }
+    setPending(true)
+    setError(null)
+    try {
+      await onSubmit({
+        action: 'open_case',
+        category,
+        title: title.trim(),
+        notes: notes.trim() || null
+      })
+    } catch (submissionError) {
+      setError(submissionError.message ?? 'Unable to open case.')
+      setPending(false)
+      return
+    }
+    setPending(false)
+  }
+
+  return (
+    <Modal title={`Open case for ${person.displayName}`} onClose={onClose}>
+      <form className="modal-form" onSubmit={handleSubmit}>
+        <label>
+          Category
+          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+            <option value="conduct">Conduct</option>
+            <option value="performance">Performance</option>
+            <option value="support">Support</option>
+            <option value="wellbeing">Wellbeing</option>
+          </select>
+        </label>
+        <label>
+          Title
+          <input
+            type="text"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Short summary of the case"
+          />
+        </label>
+        <label>
+          Notes (optional)
+          <textarea rows={4} value={notes} onChange={(event) => setNotes(event.target.value)} />
+        </label>
+        {error && <p className="text-danger">{error}</p>}
+        <footer className="modal-footer">
+          <button type="button" className="button button--ghost" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button type="submit" className="button button--primary" disabled={pending}>
+            {pending ? 'Opening�' : 'Open case'}
+          </button>
+        </footer>
+      </form>
+    </Modal>
+  )
+}
+
+function SetStatusModal({ person, onClose, onSubmit }) {
+  const [status, setStatus] = useState(person.status ?? 'active')
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState(null)
+
+  const handleSubmit = async (event) => {
+    event.preventDefault()
+    setPending(true)
+    setError(null)
+    try {
+      await onSubmit({
+        action: 'set_status',
+        status
+      })
+    } catch (submissionError) {
+      setError(submissionError.message ?? 'Unable to update status.')
+      setPending(false)
+      return
+    }
+    setPending(false)
+  }
+
+  return (
+    <Modal title={`Set status for ${person.displayName}`} onClose={onClose}>
+      <form className="modal-form" onSubmit={handleSubmit}>
+        <fieldset>
+          <legend>Status</legend>
+          <label>
+            <input
+              type="radio"
+              name="person-status"
+              value="active"
+              checked={status === 'active'}
+              onChange={() => setStatus('active')}
+            />
+            Active
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="person-status"
+              value="onboarding"
+              checked={status === 'onboarding'}
+              onChange={() => setStatus('onboarding')}
+            />
+            Onboarding
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="person-status"
+              value="offboarded"
+              checked={status === 'offboarded'}
+              onChange={() => setStatus('offboarded')}
+            />
+            Offboarded
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="person-status"
+              value="inactive"
+              checked={status === 'inactive'}
+              onChange={() => setStatus('inactive')}
+            />
+            Inactive
+          </label>
+        </fieldset>
+        {error && <p className="text-danger">{error}</p>}
+        <footer className="modal-footer">
+          <button type="button" className="button button--ghost" onClick={onClose} disabled={pending}>
+            Cancel
+          </button>
+          <button type="submit" className="button button--primary" disabled={pending}>
+            {pending ? 'Saving�' : 'Update status'}
           </button>
         </footer>
       </form>
@@ -1114,3 +2201,17 @@ function parseCsv(text) {
   }
   return records
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+

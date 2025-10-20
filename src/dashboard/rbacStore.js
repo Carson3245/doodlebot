@@ -7,7 +7,7 @@ const rbacFile = path.join(dashboardDirectory, 'rbac.json')
 
 const defaultData = {
   updatedAt: null,
-  defaultRoles: [Roles.READ_ONLY],
+  defaultRoles: [Roles.VIEWER],
   assignments: {}
 }
 
@@ -83,7 +83,7 @@ export async function getRolesForUser(userId) {
   )
 
   if (envAdmins.has(String(userId))) {
-    return [Roles.ADMIN, Roles.READ_ONLY]
+    return [Roles.ADMIN, Roles.VIEWER]
   }
 
   return [...data.defaultRoles]

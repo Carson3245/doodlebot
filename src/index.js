@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Collection, Events } from 'discord.js';
+import { Collection, Events, ChannelType } from 'discord.js';
 import { createClient } from './bot/client.js';
 import { loadCommands } from './bot/loadCommands.js';
 import { registerCommands } from './bot/registerCommands.js';
@@ -10,6 +10,11 @@ import { recordInteraction } from './brain/brainStore.js';
 import { getStyleSync, loadStyle } from './config/styleStore.js';
 import { getCommandSettings, incrementCommandUsage, loadCommandConfig } from './config/commandStore.js';
 import { ModerationEngine } from './moderation/moderationEngine.js';
+import { createDreamGenAdapter } from './comm/dreamgenAdapter.js';
+import { upsertMember, markMemberLeft } from './ops/membersStore.js';
+import { upsertChannel, removeChannel } from './ops/channelsStore.js';
+import { recordMessageCount } from './ops/messagesStore.js';
+import { startVoiceSession, endVoiceSession } from './ops/voiceSessionsStore.js';
 import {
   handleSupportComponentInteraction,
   handleSupportModalSubmit,
@@ -26,6 +31,64 @@ const conversationTimeoutMs = Number(process.env.CONVERSATION_TIMEOUT_MS ?? 2 * 
 const activeConversations = new Map();
 const MAX_HISTORY_LENGTH = 12;
 
+function resolveChannelType(channel) {
+  if (!channel) {
+    return 'text';
+  }
+  if (typeof channel.isVoiceBased === 'function' && channel.isVoiceBased()) {
+    return 'voice';
+  }
+  switch (channel.type) {
+    case ChannelType.GuildVoice:
+    case ChannelType.GuildStageVoice:
+      return 'voice';
+    case ChannelType.GuildCategory:
+      return 'category';
+    default:
+      return 'text';
+  }
+}
+
+async function syncGuildData(guild) {
+  try {
+    const members = await guild.members.fetch();
+    for (const member of members.values()) {
+      await upsertMember({
+        id: member.id,
+        guildId: guild.id,
+        username: member.user?.username ?? member.user?.tag ?? member.displayName ?? member.id,
+        bot: Boolean(member.user?.bot),
+        joinedAt: member.joinedAt ?? new Date(),
+        status: null
+      }).catch((error) => {
+        console.error('Failed to upsert guild member snapshot:', error);
+      });
+    }
+  } catch (error) {
+    console.error('Failed to sync guild members:', error);
+  }
+
+  try {
+    const channels = await guild.channels.fetch();
+    for (const channel of channels.values()) {
+      if (!channel) {
+        continue;
+      }
+      await upsertChannel({
+        id: channel.id,
+        guildId: guild.id,
+        name: channel.name ?? `channel-${channel.id}`,
+        type: resolveChannelType(channel),
+        createdAt: channel.createdAt ?? null
+      }).catch((error) => {
+        console.error('Failed to upsert channel snapshot:', error);
+      });
+    }
+  } catch (error) {
+    console.error('Failed to sync guild channels:', error);
+  }
+}
+
 if (!token) {
   console.error('Set DISCORD_TOKEN in the .env file before starting the bot.');
   process.exit(1);
@@ -34,6 +97,7 @@ if (!token) {
 const client = createClient();
 const moderation = new ModerationEngine(client);
 client.moderation = moderation;
+client.comm = createDreamGenAdapter(client);
 
 async function bootstrap() {
   await loadStyle();
@@ -47,8 +111,15 @@ async function bootstrap() {
 
   await registerCommands({ commands, clientId, guildId, token });
 
-  client.once(Events.ClientReady, (readyClient) => {
+  client.once(Events.ClientReady, async (readyClient) => {
     console.log(`Bot connected as ${readyClient.user.tag}`);
+    try {
+      for (const guild of readyClient.guilds.cache.values()) {
+        await syncGuildData(guild);
+      }
+    } catch (error) {
+      console.error('Failed to perform initial guild sync:', error);
+    }
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -113,7 +184,124 @@ async function bootstrap() {
     }
   });
 
+  client.on(Events.GuildCreate, async (guild) => {
+    try {
+      await syncGuildData(guild);
+    } catch (error) {
+      console.error('Failed to sync guild on join:', error);
+    }
+  });
+
+  client.on(Events.GuildMemberAdd, async (member) => {
+    try {
+      await upsertMember({
+        id: member.id,
+        guildId: member.guild.id,
+        username: member.user?.username ?? member.user?.tag ?? member.displayName ?? member.id,
+        bot: Boolean(member.user?.bot),
+        joinedAt: member.joinedAt ?? new Date(),
+        status: null
+      });
+    } catch (error) {
+      console.error('Failed to record member join:', error);
+    }
+  });
+
+  client.on(Events.GuildMemberRemove, async (member) => {
+    try {
+      await markMemberLeft({
+        guildId: member.guild.id,
+        memberId: member.id,
+        leftAt: new Date()
+      });
+    } catch (error) {
+      console.error('Failed to record member leave:', error);
+    }
+  });
+
+  client.on(Events.ChannelCreate, async (channel) => {
+    try {
+      if (!channel.guild) {
+        return;
+      }
+      await upsertChannel({
+        id: channel.id,
+        guildId: channel.guild?.id ?? null,
+        name: channel.name ?? `channel-${channel.id}`,
+        type: resolveChannelType(channel),
+        createdAt: channel.createdAt ?? new Date()
+      });
+    } catch (error) {
+      console.error('Failed to record channel create:', error);
+    }
+  });
+
+  client.on(Events.ChannelUpdate, async (_oldChannel, newChannel) => {
+    try {
+      if (!newChannel.guild) {
+        return;
+      }
+      await upsertChannel({
+        id: newChannel.id,
+        guildId: newChannel.guild?.id ?? null,
+        name: newChannel.name ?? `channel-${newChannel.id}`,
+        type: resolveChannelType(newChannel),
+        createdAt: newChannel.createdAt ?? null
+      });
+    } catch (error) {
+      console.error('Failed to record channel update:', error);
+    }
+  });
+
+  client.on(Events.ChannelDelete, async (channel) => {
+    try {
+      if (!channel.guild) {
+        return;
+      }
+      await removeChannel({
+        guildId: channel.guild.id,
+        channelId: channel.id
+      });
+    } catch (error) {
+      console.error('Failed to record channel delete:', error);
+    }
+  });
+
+  client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+    try {
+      if (oldState.channelId && oldState.channelId !== newState.channelId) {
+        await endVoiceSession({
+          guildId: oldState.guild.id,
+          channelId: oldState.channelId,
+          memberId: oldState.id,
+          endedAt: new Date()
+        });
+      }
+      if (newState.channelId && newState.channelId !== oldState.channelId) {
+        await startVoiceSession({
+          guildId: newState.guild.id,
+          channelId: newState.channelId,
+          memberId: newState.id,
+          startedAt: new Date()
+        });
+      }
+    } catch (error) {
+      console.error('Failed to record voice session update:', error);
+    }
+  });
+
   client.on(Events.MessageCreate, async (message) => {
+    if (message.guild) {
+      recordMessageCount({
+        guildId: message.guild.id,
+        channelId: message.channel.id,
+        date: message.createdAt ?? new Date(),
+        count: 1
+      }).catch((error) => {
+        console.error('Failed to record message count:', error);
+      });
+    }
+
     if (message.author.bot) {
       return;
     }
