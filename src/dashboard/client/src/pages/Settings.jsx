@@ -914,7 +914,7 @@ export default function SettingsPage() {
               <footer>
                 <span className="alert-card__meta">
                   {alert.createdAt ? formatDateTime(alert.createdAt) : 'Just now'}
-                  {alert.ruleKey ? ` • Rule: ${alert.ruleKey}` : ''}
+                  {alert.ruleKey ? ` ï¿½ Rule: ${alert.ruleKey}` : ''}
                 </span>
                 <button
                   type="button"
@@ -970,7 +970,7 @@ export default function SettingsPage() {
         <div>
           <h2>Style presets stay in sync with /tune</h2>
           <p className="text-muted">
-            Apply presets from Discord or tweak values here—both interfaces write to the same store.
+            Apply presets from Discord or tweak values hereï¿½both interfaces write to the same store.
           </p>
         </div>
         <span>{heroSubtitle}</span>
