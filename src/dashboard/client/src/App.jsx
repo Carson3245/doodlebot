@@ -1,7 +1,7 @@
 import { Navigate, Outlet, Route, Routes, useParams } from 'react-router-dom'
 import { AppLayout } from './components/Layout.jsx'
 import OverviewPage from './pages/Overview.jsx'
-import PeoplePage from './pages/People.jsx'
+import UsersPage from './pages/Users.jsx'
 import CasesPage from './pages/Cases.jsx'
 import InsightsPage from './pages/Insights.jsx'
 import SettingsPage from './pages/Settings.jsx'
@@ -51,7 +51,8 @@ function App() {
         <Route element={<GuildGuard />}>
           <Route element={<AppLayout />}>
             <Route index element={<OverviewPage />} />
-            <Route path="/people" element={<PeoplePage />} />
+            <Route path="/users" element={<UsersPage />} />
+            <Route path="/people" element={<Navigate to="/users" replace />} />
             <Route path="/cases" element={<CasesPage />} />
             <Route path="/cases/:caseId" element={<CasesPage />} />
             <Route path="/moderation/cases/:caseId" element={<LegacyCaseRedirect />} />

@@ -52,7 +52,7 @@ import { callDreamGen } from '../chat/providers/dreamgen.js';
 import { recordModerationAction } from '../moderation/moderationActionsStore.js';
 import { getGuildAssignments, setGuildAssignments } from '../ops/rbacAssignmentsStore.js';
 import { getVerificationConfig, setVerificationConfig } from '../ops/verificationConfigStore.js';
-import { listVerifications, updateVerificationState } from '../ops/verificationStore.js';
+import { createVerification, listVerifications, updateVerificationState } from '../ops/verificationStore.js';
 import { listModerationActions } from '../moderation/moderationActionsStore.js';
 import {
   getTelemetrySettings,
@@ -668,8 +668,9 @@ export function createDashboard(client, moderation) {
 
   api.get('/people', requirePermission(Permissions.VIEW_PEOPLE), async (req, res) => {
     try {
+      const guildId = sanitizeSnowflake(req.query.guildId);
       const result = await listPeople({
-        guildId: sanitizeSnowflake(req.query.guildId),
+        guildId,
         status: req.query.status,
         search: req.query.search,
         department: req.query.department,
@@ -679,6 +680,51 @@ export function createDashboard(client, moderation) {
         sortBy: req.query.sortBy,
         direction: req.query.direction
       });
+      const roster = Array.isArray(result.results)
+        ? result.results
+        : Array.isArray(result.items)
+        ? result.items
+        : [];
+
+      let verificationMap = new Map();
+      if (guildId) {
+        try {
+          const verifications = await listVerifications({ guildId });
+          verificationMap = verifications.reduce((acc, entry) => {
+            if (!entry?.memberId) {
+              return acc;
+            }
+            const key = String(entry.memberId);
+            const current = acc.get(key);
+            const currentTimestamp = current ? new Date(current.updatedAt ?? 0).getTime() : 0;
+            const nextTimestamp = new Date(entry.updatedAt ?? 0).getTime();
+            if (!current || nextTimestamp >= currentTimestamp) {
+              acc.set(key, { ...entry });
+            }
+            return acc;
+          }, new Map());
+        } catch (mapError) {
+          console.error('Failed to enrich roster with verification data:', mapError);
+        }
+      }
+
+      const enrichedResults = roster.map((person) => {
+        const memberKey =
+          person.discordId ??
+          person.discord_id ??
+          person.externalId ??
+          person.external_id ??
+          person.id ??
+          null;
+        const verification = memberKey ? verificationMap.get(String(memberKey)) ?? null : null;
+        return {
+          ...person,
+          verification
+        };
+      });
+
+      const verificationSummary = Object.fromEntries(verificationMap.entries());
+
       const counters =
         (await buildPeopleCounters().catch(() => null)) ?? {
           total: result.total ?? 0,
@@ -686,7 +732,7 @@ export function createDashboard(client, moderation) {
           onboarding: 0,
           offboarded: 0
         };
-      res.json({ ...result, counters });
+      res.json({ ...result, results: enrichedResults, counters, verifications: verificationSummary });
     } catch (error) {
       console.error('Failed to list people:', error);
       res.status(500).json({ error: 'Failed to load roster.' });
@@ -746,6 +792,108 @@ export function createDashboard(client, moderation) {
       res.status(500).json({ error: 'Failed to load onboarding checklist.' });
     }
   });
+
+  api.get(
+    '/people/:personId/verification',
+    requirePermission(Permissions.MANAGE_VERIFICATION),
+    async (req, res) => {
+      try {
+        const personId = req.params.personId;
+        const person = await getPerson(personId).catch(() => null);
+        const guildId =
+          sanitizeSnowflake(req.query.guildId) ??
+          sanitizeSnowflake(person?.guildId) ??
+          null;
+        const memberId =
+          sanitizeSnowflake(req.query.memberId ?? req.query.member_id) ??
+          sanitizeSnowflake(person?.discordId ?? person?.externalId ?? person?.id);
+
+        if (!guildId || !memberId) {
+          res.json({ verification: null, history: [] });
+          return;
+        }
+
+        const verifications = await listVerifications({ guildId });
+        const matches = verifications
+          .filter((entry) => entry.memberId === memberId)
+          .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
+
+        if (!matches.length) {
+          res.json({ verification: null, history: [] });
+          return;
+        }
+
+        res.json({ verification: matches[0], history: matches });
+      } catch (error) {
+        console.error('Failed to load verification for person:', error);
+        res.status(500).json({ error: 'Failed to load verification.' });
+      }
+    }
+  );
+
+  api.post(
+    '/people/:personId/verify',
+    requirePermission(Permissions.MANAGE_VERIFICATION),
+    async (req, res) => {
+      try {
+        const personId = req.params.personId;
+        const person = await getPerson(personId).catch(() => null);
+        const guildId =
+          sanitizeSnowflake(req.body?.guildId) ??
+          sanitizeSnowflake(req.query.guildId) ??
+          sanitizeSnowflake(person?.guildId);
+        const memberId =
+          sanitizeSnowflake(req.body?.memberId ?? req.query.memberId ?? req.query.member_id) ??
+          sanitizeSnowflake(person?.discordId ?? person?.externalId ?? person?.id);
+
+        if (!guildId || !memberId) {
+          res.status(400).json({ error: 'guildId and memberId are required to start verification.' });
+          return;
+        }
+
+        const auditContext = buildAuditContext(req);
+        const verifications = await listVerifications({ guildId });
+        const existing = verifications
+          .filter((entry) => entry.memberId === memberId)
+          .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
+        const pending = existing.find((entry) => entry.state === 'pending') ?? existing[0] ?? null;
+        if (pending && pending.state === 'pending') {
+          res.json({ verification: pending, created: false });
+          return;
+        }
+
+        const responses = Array.isArray(req.body?.responses) ? req.body.responses : [];
+        const verification = await createVerification({
+          guildId,
+          memberId,
+          responses,
+          meta: {
+            startedBy: auditContext.actorId ?? null,
+            personId: person?.id ?? personId ?? null
+          }
+        });
+
+        await recordAuditEntry({
+          action: 'verification.start',
+          actorId: auditContext.actorId ?? null,
+          actorTag: auditContext.actorTag ?? null,
+          actorRoles: auditContext.actorRoles ?? [],
+          guildId,
+          targetId: memberId,
+          targetType: 'member',
+          targetLabel: person?.displayName ?? memberId,
+          metadata: { personId: person?.id ?? null }
+        }).catch((auditError) => {
+          console.error('Failed to record verification start audit entry:', auditError);
+        });
+
+        res.json({ verification, created: true });
+      } catch (error) {
+        console.error('Failed to start verification:', error);
+        res.status(500).json({ error: 'Failed to start verification.' });
+      }
+    }
+  );
 
   api.post('/people/:personId/actions', requirePermission(Permissions.MANAGE_PEOPLE), async (req, res) => {
     const personId = req.params.personId;
@@ -1399,7 +1547,13 @@ export function createDashboard(client, moderation) {
         tag: member.user?.tag ?? null,
         avatar: member.displayAvatarURL({ size: 64, extension: 'png' }),
         joinedAt:
-          member.joinedAt instanceof Date ? member.joinedAt.toISOString() : null
+          member.joinedAt instanceof Date ? member.joinedAt.toISOString() : null,
+        createdAt:
+          member.user?.createdAt instanceof Date
+            ? member.user.createdAt.toISOString()
+            : Number.isFinite(member.user?.createdTimestamp)
+            ? new Date(member.user.createdTimestamp).toISOString()
+            : null
       }));
 
       res.json(members);

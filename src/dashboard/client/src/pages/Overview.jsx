@@ -15,7 +15,7 @@ const QUICK_ACTIONS = [
     id: 'verify-backlog',
     label: 'Verify backlog',
     type: 'link',
-    href: '/people?status=pending',
+    href: '/users?status=pending',
     description: 'Jump to the verification queue and clear pending approvals.'
   },
   {
@@ -59,7 +59,7 @@ function formatTimestamp(value) {
   try {
     const date = new Date(value)
     return date.toLocaleString()
-  } catch (_error) {
+  } catch {
     return null
   }
 }
@@ -113,19 +113,23 @@ export default function OverviewPage() {
     }
   }, [guildId])
 
-  const metrics = overview.data ?? {
-    activeMembers: 0,
-    joinsThisMonth: 0,
-    leavesThisMonth: 0,
-    openCases: 0,
-    messagesPerDay: 0,
-    voiceMinutesPerDay: 0,
-    monthEndMembers: [],
-    joinsVsLeaves: [],
-    engagementByChannel: [],
-    voiceByChannel: [],
-    alerts: []
-  }
+  const metrics = useMemo(
+    () =>
+      overview.data ?? {
+        activeMembers: 0,
+        joinsThisMonth: 0,
+        leavesThisMonth: 0,
+        openCases: 0,
+        messagesPerDay: 0,
+        voiceMinutesPerDay: 0,
+        monthEndMembers: [],
+        joinsVsLeaves: [],
+        engagementByChannel: [],
+        voiceByChannel: [],
+        alerts: []
+      },
+    [overview.data]
+  )
 
   const kpis = useMemo(
     () => [
@@ -214,7 +218,6 @@ export default function OverviewPage() {
       let buffer = ''
       let summaryText = ''
 
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const { value, done } = await reader.read()
         if (done) {
@@ -240,7 +243,7 @@ export default function OverviewPage() {
             if (event.summary) {
               summaryText = event.summary
             }
-          } catch (_error) {
+          } catch {
             // ignore JSON parsing errors for partial chunks
           }
         }

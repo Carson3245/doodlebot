@@ -16,7 +16,7 @@ const NAV_ITEMS = [
 
   { label: 'Overview', to: '/' },
 
-  { label: 'People', to: '/people' },
+  { label: 'Users', to: '/users' },
 
   { label: 'Cases', to: '/cases' },
 
