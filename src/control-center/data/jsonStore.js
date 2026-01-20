@@ -20,7 +20,8 @@ export async function readJson(relativePath, defaultValue = null) {
       // File doesn't exist, return default value
       return defaultValue;
     }
-    // Other errors should be thrown
+    // Log other errors for debugging before re-throwing
+    console.error(`Failed to read JSON from ${relativePath}:`, error);
     throw error;
   }
 }
@@ -38,6 +39,12 @@ export async function writeJson(relativePath, data) {
   // Ensure directory exists
   await fs.mkdir(directory, { recursive: true });
   
-  // Write the file with pretty formatting
-  await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
+  try {
+    // Write the file with pretty formatting
+    await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf8');
+  } catch (error) {
+    // Handle serialization errors (e.g., circular references)
+    console.error(`Failed to write JSON to ${relativePath}:`, error);
+    throw error;
+  }
 }
